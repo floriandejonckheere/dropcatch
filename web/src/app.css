@@ -1,0 +1,266 @@
+:root {
+  color-scheme: dark;
+  --bg: #0e0e14;
+  --bg-elev: #16161f;
+  --bg-elev-2: #1e1e2a;
+  --bg-hover: #23232f;
+  --border: #2a2a38;
+  --text: #ececf3;
+  --text-2: #a3a3b5;
+  --text-3: #6d6d80;
+  --accent: #2f8cff;
+  --accent-2: #19c39c;
+  --accent-text: #7ab6ff;
+  --gradient: linear-gradient(135deg, var(--accent), var(--accent-2));
+  --shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+  --available: #2bd17e;
+  --dropping: #ffb340;
+  --registered: #8c8ca3;
+  --danger: #ff6b81;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --font: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg: #f7f7fa;
+    --bg-elev: #ffffff;
+    --bg-elev-2: #f0f0f5;
+    --bg-hover: #ebebf2;
+    --border: #e1e1ea;
+    --text: #17171f;
+    --text-2: #56566a;
+    --text-3: #8d8da0;
+    --accent: #1d6fe0;
+    --accent-2: #0ea07e;
+    --accent-text: #155fc4;
+    --shadow: 0 10px 40px rgba(20, 20, 60, 0.15);
+    --available: #11a35a;
+    --dropping: #c77800;
+    --registered: #6d6d80;
+    --danger: #d9364f;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#app {
+  height: 100%;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+button:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  color: var(--text-2);
+  transition:
+    color 0.15s,
+    background 0.15s,
+    transform 0.1s;
+}
+
+.icon-btn:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.icon-btn:active {
+  transform: scale(0.94);
+}
+
+/* Toggles that are off recede, so the lit ones stand out. */
+.icon-btn.toggle:not(.active, :hover) {
+  color: var(--text-3);
+}
+
+.icon-btn.active {
+  color: var(--accent-text);
+}
+
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 18px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  background: var(--bg-elev-2);
+  transition:
+    background 0.15s,
+    transform 0.1s;
+}
+
+.pill:hover {
+  background: var(--bg-hover);
+}
+
+.pill.primary {
+  background: var(--gradient);
+  color: #fff;
+}
+
+.pill.primary:hover {
+  filter: brightness(1.08);
+}
+
+.pill:active {
+  transform: scale(0.97);
+}
+
+.ellipsis {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.pill.danger {
+  background: #d9364f;
+  color: #fff;
+}
+
+.pill:disabled {
+  opacity: 0.45;
+  cursor: default;
+  transform: none;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.input {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.input::placeholder {
+  color: var(--text-3);
+}
+
+select.input {
+  padding-right: 8px;
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.check input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+.card {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.muted {
+  color: var(--text-3);
+}
+
+textarea.input {
+  height: auto;
+  min-height: 40px;
+  padding: 9px 12px;
+  resize: vertical;
+  line-height: 1.4;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}

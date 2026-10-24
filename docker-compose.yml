@@ -1,0 +1,28 @@
+# Example Docker Compose setup for Dropcatch.
+#
+#   docker compose up -d
+#
+# Then open http://localhost:8080. Change the password first.
+services:
+  dropcatch:
+    image: ghcr.io/floriandejonckheere/dropcatch:main
+    container_name: dropcatch
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      # Domains, notification targets, settings and the session key.
+      - dropcatch-data:/data
+    environment:
+      # Dropcatch runs as this user and group, and owns the data volume.
+      PUID: 1000
+      PGID: 1000
+      # Enables login. Prefer DROPCATCH_PASSWORD_HASH (bcrypt) for anything exposed to the internet,
+      # or DROPCATCH_PASSWORD_FILE / DROPCATCH_PASSWORD_HASH_FILE to read it from a Docker secret.
+      DROPCATCH_PASSWORD: change-me
+      # DROPCATCH_USERNAME: admin
+      # DROPCATCH_BASE_PATH: /dropcatch
+      # TZ: Europe/Brussels
+
+volumes:
+  dropcatch-data:
