@@ -33,13 +33,17 @@ func fakeAPI(t *testing.T) (*Client, *int) {
 			catalogs++
 			fmt.Fprint(w, `{"locale":{"currencyCode":"EUR"},
 				"plans":[
-					{"planCode":"vps-2025-model2","invoiceName":"VPS-2","product":"vps-2025-model2",
+					{"planCode":"vps-2025-model2","invoiceName":"VPS-2","product":"vps-2025-model2","blobs":{"tags":["order-funnel:show"]},
 					 "pricings":[{"capacities":["installation"],"interval":1,"intervalUnit":"month","price":0},
 					             {"capacities":["renew"],"interval":1,"intervalUnit":"month","price":770000000}]},
+					{"planCode":"vps-2025-model10","invoiceName":"VPS-10","blobs":{"tags":["order-funnel:show"]}},
 					{"planCode":"vps-2025-model1","invoiceName":"VPS-1","product":"vps-2025-model1",
 					 "pricings":[{"capacities":["renew"],"interval":1,"intervalUnit":"month","price":420000000}],
-					 "blobs":{"technical":{"cpu":{"cores":4},"memory":{"size":8},"storage":{"disks":[{"capacity":75,"technology":"SSD"}]}}}},
-					{"planCode":"option-backup","invoiceName":"Backup"}],
+					 "blobs":{"tags":["order-funnel:show"],"technical":{"cpu":{"cores":4},"memory":{"size":8},"storage":{"disks":[{"capacity":75,"technology":"SSD"}]}}}},
+					{"planCode":"vps-2025-model1-eu","invoiceName":"VPS-1","blobs":{"tags":["order-funnel:show"]}},
+					{"planCode":"vps-2024-model2","invoiceName":"VPS-2 2024","blobs":{"tags":["os:distribution-only"]}},
+					{"planCode":"vps-essential-2-4-80-vps-2025-model2","invoiceName":"VPS-2"},
+					{"planCode":"option-backup","invoiceName":"Backup","blobs":{"tags":["order-funnel:show"]}}],
 				"products":[{"name":"vps-2025-model2","blobs":{"technical":{"cpu":{"cores":6},"memory":{"size":12},"storage":{"disks":[{"capacity":100,"technology":"NVMe"}]}}}}]}`)
 		default:
 			http.NotFound(w, r)
@@ -82,12 +86,16 @@ func TestPlans(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cat.Currency != "EUR" || len(cat.Plans) != 2 {
-		t.Fatalf("catalog = %+v", cat)
-	}
+	// Only orderable plans, sorted by name; plans sharing a name show
+	// their code.
 	want := []Plan{
-		{Code: "vps-2025-model1", Name: "VPS-1", Cores: 4, Memory: 8, Storage: 75, Disk: "SSD", Price: 4.2},
+		{Code: "vps-2025-model1", Name: "VPS-1 (vps-2025-model1)", Cores: 4, Memory: 8, Storage: 75, Disk: "SSD", Price: 4.2},
+		{Code: "vps-2025-model1-eu", Name: "VPS-1 (vps-2025-model1-eu)"},
 		{Code: "vps-2025-model2", Name: "VPS-2", Cores: 6, Memory: 12, Storage: 100, Disk: "NVMe", Price: 7.7},
+		{Code: "vps-2025-model10", Name: "VPS-10"},
+	}
+	if cat.Currency != "EUR" || len(cat.Plans) != len(want) {
+		t.Fatalf("catalog = %+v", cat)
 	}
 	for i := range want {
 		if cat.Plans[i] != want[i] {

@@ -13,7 +13,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"net/url"
 	"slices"
@@ -239,7 +238,7 @@ func (c *Client) Stock(ctx context.Context, subsidiary, plan string) ([]Datacent
 	return out, nil
 }
 
-// Plans returns the VPS plans of a subsidiary, cheapest first.
+// Plans returns the orderable VPS plans of a subsidiary, sorted by name.
 func (c *Client) Plans(ctx context.Context, subsidiary string) (Catalog, error) {
 	c.mu.Lock()
 	cached, ok := c.catalogs[subsidiary]
@@ -296,6 +295,7 @@ type rawCatalog struct {
 		} `json:"pricings"`
 		Blobs struct {
 			Technical *technical `json:"technical"`
+			Tags      []string   `json:"tags"`
 		} `json:"blobs"`
 	} `json:"plans"`
 	Products []struct {
@@ -306,8 +306,14 @@ type rawCatalog struct {
 	} `json:"products"`
 }
 
-// parse keeps the VPS plans and their specifications. Catalog prices are
-// in hundred-millionths of the currency unit.
+// orderable tags the plans OVH sells to new customers. The catalog also
+// lists retired plans (still out of stock everywhere) and upgrade paths
+// from older ranges, which reuse the plans' names and report stock but
+// cannot be ordered.
+const orderable = "order-funnel:show"
+
+// parse keeps the orderable VPS plans and their specifications, sorted by
+// name. Catalog prices are in hundred-millionths of the currency unit.
 func (r rawCatalog) parse() Catalog {
 	products := map[string]*technical{}
 	for _, p := range r.Products {
@@ -315,7 +321,7 @@ func (r rawCatalog) parse() Catalog {
 	}
 	cat := Catalog{Currency: r.Locale.CurrencyCode, Plans: []Plan{}}
 	for _, p := range r.Plans {
-		if !strings.HasPrefix(p.PlanCode, "vps") {
+		if !strings.HasPrefix(p.PlanCode, "vps") || !slices.Contains(p.Blobs.Tags, orderable) {
 			continue
 		}
 		plan := Plan{Code: p.PlanCode, Name: p.InvoiceName}
@@ -340,15 +346,48 @@ func (r rawCatalog) parse() Catalog {
 		}
 		cat.Plans = append(cat.Plans, plan)
 	}
-	// Plans without a monthly price go last.
-	price := func(p Plan) float64 {
-		if p.Price == 0 {
-			return math.Inf(1)
-		}
-		return p.Price
+	// OVHcloud US sells the same plan in its own datacenters and, as
+	// vps-…-eu and vps-…-ca, in the European and Canadian ones, all under
+	// one name: tell them apart by code.
+	names := map[string]int{}
+	for _, p := range cat.Plans {
+		names[p.Name]++
 	}
-	slices.SortStableFunc(cat.Plans, func(a, b Plan) int {
-		return cmp.Or(cmp.Compare(price(a), price(b)), strings.Compare(a.Code, b.Code))
+	for i, p := range cat.Plans {
+		if names[p.Name] > 1 {
+			cat.Plans[i].Name = p.Name + " (" + p.Code + ")"
+		}
+	}
+	slices.SortFunc(cat.Plans, func(a, b Plan) int {
+		return cmp.Or(naturalCompare(a.Name, b.Name), strings.Compare(a.Code, b.Code))
 	})
 	return cat
+}
+
+// naturalCompare compares strings with runs of digits as numbers, so that
+// VPS-2 sorts before VPS-10.
+func naturalCompare(a, b string) int {
+	digits := func(s string) int {
+		n := 0
+		for n < len(s) && s[n] >= '0' && s[n] <= '9' {
+			n++
+		}
+		return n
+	}
+	for a != "" && b != "" {
+		na, nb := digits(a), digits(b)
+		if na > 0 && nb > 0 {
+			x, y := strings.TrimLeft(a[:na], "0"), strings.TrimLeft(b[:nb], "0")
+			if c := cmp.Or(cmp.Compare(len(x), len(y)), strings.Compare(x, y)); c != 0 {
+				return c
+			}
+			a, b = a[na:], b[nb:]
+			continue
+		}
+		if a[0] != b[0] {
+			return cmp.Compare(a[0], b[0])
+		}
+		a, b = a[1:], b[1:]
+	}
+	return cmp.Compare(len(a), len(b))
 }

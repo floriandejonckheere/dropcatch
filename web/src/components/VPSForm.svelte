@@ -133,7 +133,7 @@
               {#each catalog.plans as p (p.code)}<option value={p.code}>{p.name}</option>{/each}
             </select>
           {:else}
-            <input class="input mono" bind:value={plan} placeholder={catalogError ? 'vps-2025-model1' : 'Loading plans…'} autocomplete="off" spellcheck="false" required />
+            <input class="input mono" bind:value={plan} placeholder={catalogError ? 'vps-2027-model1' : 'Loading plans…'} autocomplete="off" spellcheck="false" required />
           {/if}
         </label>
       </div>

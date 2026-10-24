@@ -61,7 +61,7 @@ func main() {
 	http.HandleFunc("GET /v1/order/catalog/public/vps", func(w http.ResponseWriter, r *http.Request) {
 		var plans, products []string
 		for i, p := range vpsPlans {
-			plans = append(plans, fmt.Sprintf(`{"planCode":%[1]q,"invoiceName":%[2]q,"product":%[1]q,
+			plans = append(plans, fmt.Sprintf(`{"planCode":%[1]q,"invoiceName":%[2]q,"product":%[1]q,"blobs":{"tags":["order-funnel:show"]},
 				"pricings":[{"capacities":["renew"],"interval":1,"intervalUnit":"month","price":%[3]d}]}`, p.code, p.name, p.price))
 			products = append(products, fmt.Sprintf(`{"name":%q,"blobs":{"technical":{"cpu":{"cores":%d},"memory":{"size":%d},
 				"storage":{"disks":[{"capacity":%d,"technology":"NVMe"}]}}}}`, p.code, 2+2*i, 4<<i, 75*(i+1)))
