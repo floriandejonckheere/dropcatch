@@ -1,9 +1,10 @@
-import { api, url, type Domain, type Settings, type Target } from './api'
+import { api, url, type Domain, type Settings, type Target, type VPS } from './api'
 
-// The domains, targets and settings, kept current through Server-Sent
+// The domains, VPS watches, targets and settings, kept current through Server-Sent
 // Events (check results, and changes made in other tabs).
 class AppState {
   domains = $state<Domain[]>([])
+  vps = $state<VPS[]>([])
   targets = $state<Target[]>([])
   settings = $state<Settings>({ interval: 60, timeout: 20, notifyChanges: true })
   checking = $state<string[]>([])
@@ -14,6 +15,7 @@ class AppState {
   async load() {
     const s = await api.state()
     this.domains = s.domains
+    this.vps = s.vps
     this.targets = s.targets
     this.settings = s.settings
     this.checking = s.checking
@@ -35,6 +37,8 @@ class AppState {
     on<Domain>('domain', (d) => this.upsert(d))
     on<Domain[]>('domains', (ds) => (this.domains = ds))
     on<string>('removed', (name) => (this.domains = this.domains.filter((d) => d.name !== name)))
+    on<VPS>('vps', (v) => this.upsertVPS(v))
+    on<string>('vpsRemoved', (id) => (this.vps = this.vps.filter((v) => v.id !== id)))
     on<Target[]>('targets', (ts) => (this.targets = ts))
     on<Settings>('settings', (s) => (this.settings = s))
     on<string[]>('checking', (names) => (this.checking = names))
@@ -44,6 +48,12 @@ class AppState {
     const i = this.domains.findIndex((x) => x.name === d.name)
     if (i >= 0) this.domains[i] = d
     else this.domains = [...this.domains, d].sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  upsertVPS(v: VPS) {
+    const i = this.vps.findIndex((x) => x.id === v.id)
+    if (i >= 0) this.vps[i] = v
+    else this.vps = [...this.vps, v]
   }
 
   upsertTarget(t: Target) {

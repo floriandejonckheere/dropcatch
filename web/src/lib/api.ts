@@ -1,9 +1,11 @@
-export type Status = 'unknown' | 'registered' | 'dropping' | 'available'
+export type Status = 'unknown' | 'registered' | 'dropping' | 'available' | 'out-of-stock'
 
 export interface Change {
   time: string
   from: Status
   to: Status
+  /** Such as the datacenters with stock of a VPS. */
+  detail?: string
 }
 
 export interface Domain {
@@ -26,6 +28,49 @@ export interface Domain {
   history?: Change[]
 }
 
+export type Region = 'europe' | 'north-america' | 'asia-pacific' | 'other'
+
+/** Stock of a VPS plan in one datacenter. */
+export interface Stock {
+  code: string
+  name: string
+  region: Region
+  available: boolean
+}
+
+export interface VPS {
+  id: string
+  subsidiary: string
+  plan: string
+  planName: string
+  /** Watched datacenter codes; empty for any. */
+  datacenters: string[]
+  note?: string
+  paused?: boolean
+  added: string
+  status: Status
+  stock?: Stock[]
+  changed?: string
+  checked?: string
+  error?: string
+  history?: Change[]
+}
+
+export interface Plan {
+  code: string
+  name: string
+  cores?: number
+  memory?: number
+  storage?: number
+  disk?: string
+  price?: number
+}
+
+export interface Catalog {
+  currency: string
+  plans: Plan[]
+}
+
 export interface Target {
   id: string
   name: string
@@ -45,6 +90,7 @@ export interface Settings {
 
 export interface State {
   domains: Domain[]
+  vps: VPS[]
   targets: Target[]
   settings: Settings
   checking: string[]
@@ -53,6 +99,7 @@ export interface State {
 export interface ServerConfig {
   version: string
   apprise: boolean
+  ovhSubsidiaries: { code: string; name: string }[]
   limits: { minInterval: number; maxInterval: number; minTimeout: number; maxTimeout: number }
   auth: { required: boolean; username: boolean; authenticated: boolean }
 }
@@ -110,6 +157,14 @@ export const api = {
   removeDomain: (name: string) => request<{ ok: boolean }>('DELETE', `domains/${enc(name)}`),
   checkDomain: (name: string) => request<{ ok: boolean }>('POST', `domains/${enc(name)}/check`),
   checkAll: () => request<{ ok: boolean }>('POST', 'check'),
+
+  ovhPlans: (subsidiary: string) => request<Catalog>('GET', `ovh/plans?subsidiary=${enc(subsidiary)}`),
+  ovhStock: (subsidiary: string, plan: string) =>
+    request<{ datacenters: Stock[] }>('GET', `ovh/stock?subsidiary=${enc(subsidiary)}&plan=${enc(plan)}`),
+  addVPS: (v: { subsidiary: string; plan: string; planName: string; datacenters: string[]; note: string }) => request<VPS>('POST', 'vps', v),
+  editVPS: (id: string, patch: { datacenters?: string[]; note?: string; paused?: boolean }) => request<VPS>('PATCH', `vps/${enc(id)}`, patch),
+  removeVPS: (id: string) => request<{ ok: boolean }>('DELETE', `vps/${enc(id)}`),
+  checkVPS: (id: string) => request<{ ok: boolean }>('POST', `vps/${enc(id)}/check`),
 
   addTarget: (t: Omit<Target, 'id'>) => request<Target>('POST', 'targets', { name: t.name, url: t.url, enabled: t.enabled }),
   editTarget: (id: string, patch: Partial<Pick<Target, 'name' | 'url' | 'enabled'>>) => request<Target>('PATCH', `targets/${enc(id)}`, patch),

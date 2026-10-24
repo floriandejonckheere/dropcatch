@@ -4,16 +4,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/floriandejonckheere/dropcatch/internal/config"
 	"github.com/floriandejonckheere/dropcatch/internal/lookup"
 	"github.com/floriandejonckheere/dropcatch/internal/monitor"
 	"github.com/floriandejonckheere/dropcatch/internal/notify"
+	"github.com/floriandejonckheere/dropcatch/internal/ovh"
 	"github.com/floriandejonckheere/dropcatch/internal/store"
 )
 
@@ -21,6 +24,19 @@ type noLookup struct{}
 
 func (noLookup) Lookup(context.Context, string) (lookup.Result, error) {
 	return lookup.Result{Status: lookup.Registered}, nil
+}
+
+type fakeOVH struct{}
+
+func (fakeOVH) Plans(_ context.Context, sub string) (ovh.Catalog, error) {
+	return ovh.Catalog{Currency: "EUR", Plans: []ovh.Plan{{Code: "vps-2025-model1", Name: "VPS-1", Cores: 4, Memory: 8, Storage: 75, Price: 4.2}}}, nil
+}
+
+func (fakeOVH) Stock(_ context.Context, sub, plan string) ([]ovh.Datacenter, error) {
+	if plan != "vps-2025-model1" {
+		return nil, errors.New("no such plan")
+	}
+	return []ovh.Datacenter{{Code: "eu-west-gra", Name: "Gravelines, France", Region: ovh.Europe, Available: true}}, nil
 }
 
 type testServer struct {
@@ -37,9 +53,10 @@ func newServer(t *testing.T, password string) *testServer {
 		t.Fatal(err)
 	}
 	apprise := &notify.Apprise{}
-	m := monitor.New(st, noLookup{}, apprise)
+	o := &fakeOVH{}
+	m := monitor.New(st, noLookup{}, o, apprise)
 	ui := fstest.MapFS{"index.html": {Data: []byte("<html>dropcatch</html>")}}
-	s, err := New(cfg, st, m, apprise, ui)
+	s, err := New(cfg, st, m, o, apprise, ui)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,5 +210,69 @@ func TestCrossOrigin(t *testing.T) {
 	ts.h.ServeHTTP(w, r)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("cross-origin POST: %d", w.Code)
+	}
+}
+
+func TestVPS(t *testing.T) {
+	ts := newServer(t, "")
+	var cat ovh.Catalog
+	if code := ts.do("GET", "/api/ovh/plans?subsidiary=FR", nil, &cat); code != http.StatusOK || len(cat.Plans) != 1 {
+		t.Fatalf("plans: %d %+v", code, cat)
+	}
+	if code := ts.do("GET", "/api/ovh/plans?subsidiary=XX", nil, nil); code != http.StatusBadRequest {
+		t.Fatalf("plans of an unknown subsidiary: %d", code)
+	}
+	var stock struct{ Datacenters []ovh.Datacenter }
+	if code := ts.do("GET", "/api/ovh/stock?subsidiary=FR&plan=vps-2025-model1", nil, &stock); code != http.StatusOK || len(stock.Datacenters) != 1 {
+		t.Fatalf("stock: %d %+v", code, stock)
+	}
+	if code := ts.do("GET", "/api/ovh/stock?subsidiary=FR&plan=nope", nil, nil); code != http.StatusBadGateway {
+		t.Fatalf("stock of an unknown plan: %d", code)
+	}
+
+	var v store.VPS
+	add := map[string]any{"subsidiary": "FR", "plan": "vps-2025-model1", "planName": "VPS-1", "datacenters": []string{"eu-west-sbg", "EU-WEST-GRA", "eu-west-sbg"}}
+	if code := ts.do("POST", "/api/vps", add, &v); code != http.StatusOK || v.ID == "" || v.Status != store.Unknown ||
+		strings.Join(v.Datacenters, ",") != "eu-west-gra,eu-west-sbg" {
+		t.Fatalf("add: %d %+v", code, v)
+	}
+	if code := ts.do("POST", "/api/vps", add, nil); code != http.StatusConflict {
+		t.Fatalf("adding the same watch twice: %d", code)
+	}
+	for _, bad := range []map[string]any{
+		{"subsidiary": "XX", "plan": "vps-2025-model1"},
+		{"subsidiary": "FR", "plan": ""},
+		{"subsidiary": "FR", "plan": "vps-1", "datacenters": []string{"bad code!"}},
+	} {
+		if code := ts.do("POST", "/api/vps", bad, nil); code != http.StatusBadRequest {
+			t.Errorf("add %v: %d", bad, code)
+		}
+	}
+
+	// Changing the datacenters recomputes the status from the last stock.
+	_ = ts.store.Update(func(s *store.State) error {
+		s.VPSWatch(v.ID).SetStock([]store.Stock{{Code: "eu-west-rbx", Name: "Roubaix", Available: true}}, time.Now())
+		return nil
+	})
+	if code := ts.do("PATCH", "/api/vps/"+v.ID, map[string]any{"datacenters": []string{}, "paused": true, "note": "cheap"}, &v); code != http.StatusOK ||
+		v.Status != store.Available || !v.Paused || v.Note != "cheap" || len(v.Datacenters) != 0 {
+		t.Fatalf("edit: %d %+v", code, v)
+	}
+	if code := ts.do("POST", "/api/vps/"+v.ID+"/check", nil, nil); code != http.StatusAccepted {
+		t.Fatalf("check: %d", code)
+	}
+	var st struct {
+		VPS      []store.VPS
+		Checking []string
+	}
+	ts.do("GET", "/api/state", nil, &st)
+	if len(st.VPS) != 1 || len(st.Checking) != 1 || st.Checking[0] != "vps:"+v.ID {
+		t.Fatalf("state = %+v", st)
+	}
+	if code := ts.do("DELETE", "/api/vps/"+v.ID, nil, nil); code != http.StatusOK {
+		t.Fatalf("remove: %d", code)
+	}
+	if code := ts.do("PATCH", "/api/vps/"+v.ID, map[string]any{"paused": false}, nil); code != http.StatusNotFound {
+		t.Fatalf("edit removed: %d", code)
 	}
 }

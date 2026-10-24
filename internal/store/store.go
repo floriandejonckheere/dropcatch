@@ -22,16 +22,18 @@ import (
 
 const FileName = "dropcatch.json"
 
-// Domain statuses. A domain is Unknown until its first successful check;
-// the others match lookup.Status.
+// Statuses. Everything is Unknown until its first successful check.
+// Domains are Registered, Dropping or Available (as in lookup.Status);
+// VPS watches are OutOfStock or Available.
 const (
 	Unknown    = "unknown"
 	Registered = "registered"
 	Dropping   = "dropping"
 	Available  = "available"
+	OutOfStock = "out-of-stock"
 )
 
-// historyLimit is how many status changes are kept per domain.
+// historyLimit is how many status changes are kept per domain or VPS.
 const historyLimit = 20
 
 var (
@@ -42,17 +44,18 @@ var (
 type State struct {
 	Settings Settings `json:"settings"`
 	Domains  []Domain `json:"domains"`
+	VPS      []VPS    `json:"vps"`
 	Targets  []Target `json:"targets"`
 }
 
 type Settings struct {
-	// Interval between checks of each domain, in minutes.
+	// Interval between checks of each domain or VPS, in minutes.
 	Interval int `json:"interval"`
 	// Timeout of one registry query, in seconds.
 	Timeout int `json:"timeout"`
 	// NotifyChanges also sends notifications when a domain enters its
-	// deletion period, is renewed or is registered again; becoming
-	// available is always notified.
+	// deletion period, is renewed or is registered again, and when a VPS
+	// sells out again; becoming available is always notified.
 	NotifyChanges bool `json:"notifyChanges"`
 }
 
@@ -101,21 +104,89 @@ type Domain struct {
 }
 
 type Change struct {
-	Time time.Time `json:"time"`
-	From string    `json:"from"`
-	To   string    `json:"to"`
+	Time   time.Time `json:"time"`
+	From   string    `json:"from"`
+	To     string    `json:"to"`
+	Detail string    `json:"detail,omitempty"` // such as the datacenters of a VPS
 }
 
 // SetStatus records a status change in the history.
 func (d *Domain) SetStatus(status string, now time.Time) {
-	if status == d.Status {
+	setStatus(&d.Status, &d.Changed, &d.History, status, "", now)
+}
+
+// setStatus changes *status to to, and records the change when it is one,
+// or when only its detail changed.
+func setStatus(status *string, changed **time.Time, history *[]Change, to, detail string, now time.Time) {
+	if to == *status && (len(*history) == 0 || (*history)[0].Detail == detail) {
 		return
 	}
-	d.History = append([]Change{{Time: now, From: d.Status, To: status}}, d.History...)
-	if len(d.History) > historyLimit {
-		d.History = d.History[:historyLimit]
+	*history = append([]Change{{Time: now, From: *status, To: to, Detail: detail}}, *history...)
+	if len(*history) > historyLimit {
+		*history = (*history)[:historyLimit]
 	}
-	d.Status, d.Changed = status, &now
+	if to != *status {
+		*status, *changed = to, &now
+	}
+}
+
+// VPS watches the stock of an OVHcloud VPS plan.
+type VPS struct {
+	ID         string `json:"id"`
+	Subsidiary string `json:"subsidiary"` // OVH country shop, such as FR
+	Plan       string `json:"plan"`       // plan code, such as vps-2025-model1
+	PlanName   string `json:"planName"`
+	// Datacenters to watch (codes such as eu-west-gra); empty for any.
+	Datacenters []string  `json:"datacenters"`
+	Note        string    `json:"note,omitempty"`
+	Paused      bool      `json:"paused,omitempty"`
+	Added       time.Time `json:"added"`
+
+	// Last successful check: Available when a watched datacenter has stock.
+	Status  string     `json:"status"`
+	Stock   []Stock    `json:"stock,omitempty"` // every datacenter that offers the plan
+	Changed *time.Time `json:"changed,omitempty"`
+
+	// Last attempt, successful or not.
+	Checked *time.Time `json:"checked,omitempty"`
+	Error   string     `json:"error,omitempty"`
+
+	History []Change `json:"history,omitempty"` // newest first
+}
+
+type Stock struct {
+	Code      string `json:"code"`
+	Name      string `json:"name"`
+	Region    string `json:"region"`
+	Available bool   `json:"available"`
+}
+
+// Watches reports whether v watches the datacenter code.
+func (v *VPS) Watches(code string) bool {
+	return len(v.Datacenters) == 0 || slices.Contains(v.Datacenters, code)
+}
+
+// InStock returns the watched datacenters with stock.
+func (v *VPS) InStock() []Stock {
+	var out []Stock
+	for _, s := range v.Stock {
+		if s.Available && v.Watches(s.Code) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// SetStock records a check result. The history also notes when the
+// datacenters with stock change while the status stays Available.
+func (v *VPS) SetStock(stock []Stock, now time.Time) {
+	v.Stock = stock
+	status, names := OutOfStock, []string{}
+	for _, s := range v.InStock() {
+		status = Available
+		names = append(names, s.Name)
+	}
+	setStatus(&v.Status, &v.Changed, &v.History, status, strings.Join(names, "; "), now)
 }
 
 type Target struct {
@@ -167,11 +238,46 @@ func (s *State) RemoveDomain(name string) error {
 	return nil
 }
 
-// AddTarget adds a target with a new ID.
-func (s *State) AddTarget(t Target) *Target {
+// VPSWatch returns the VPS watch with id; the pointer refers into s.VPS.
+func (s State) VPSWatch(id string) *VPS {
+	for i := range s.VPS {
+		if s.VPS[i].ID == id {
+			return &s.VPS[i]
+		}
+	}
+	return nil
+}
+
+// AddVPS adds a VPS watch with a new ID, unless an identical one exists.
+func (s *State) AddVPS(v VPS, now time.Time) (*VPS, error) {
+	for _, o := range s.VPS {
+		if o.Subsidiary == v.Subsidiary && o.Plan == v.Plan && slices.Equal(o.Datacenters, v.Datacenters) {
+			return nil, fmt.Errorf("%s in these datacenters is already watched: %w", v.PlanName, ErrExists)
+		}
+	}
+	v.ID, v.Added, v.Status = newID(), now, Unknown
+	s.VPS = append(s.VPS, v)
+	return &s.VPS[len(s.VPS)-1], nil
+}
+
+func (s *State) RemoveVPS(id string) error {
+	n := len(s.VPS)
+	s.VPS = slices.DeleteFunc(s.VPS, func(v VPS) bool { return v.ID == id })
+	if len(s.VPS) == n {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func newID() string {
 	b := make([]byte, 6)
 	_, _ = rand.Read(b)
-	t.ID = hex.EncodeToString(b)
+	return hex.EncodeToString(b)
+}
+
+// AddTarget adds a target with a new ID.
+func (s *State) AddTarget(t Target) *Target {
+	t.ID = newID()
 	s.Targets = append(s.Targets, t)
 	return &s.Targets[len(s.Targets)-1]
 }
@@ -275,6 +381,9 @@ func clone(st State) State {
 	_ = json.Unmarshal(data, &c)
 	if c.Domains == nil {
 		c.Domains = []Domain{}
+	}
+	if c.VPS == nil {
+		c.VPS = []VPS{}
 	}
 	if c.Targets == nil {
 		c.Targets = []Target{}

@@ -13,7 +13,7 @@ test:
 check: test
 	cd web && npm run check
 
-# Runs a fake RDAP registry for local development (see scripts/fakeregistry).
+# Runs a fake RDAP registry and OVH API for local development (see scripts/fakeregistry).
 fakeregistry:
 	go run ./scripts/fakeregistry
 

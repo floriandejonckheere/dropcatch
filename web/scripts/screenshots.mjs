@@ -21,11 +21,19 @@ async function api(method, endpoint, body) {
 }
 
 // Demo data. The fake registry reports names starting with "free" as
-// available and those starting with "drop" as pending deletion.
+// available and those starting with "drop" as pending deletion; of its VPS
+// plans, VPS-1 is out of stock and the others are in stock somewhere.
+// Watches whose stock is shown in screenshots have the datacenters' names
+// once checked.
 await api('POST', 'domains', { names: 'free-coffee.shop dropshipping.dev example.com pixelforge.io bücher.de northwind.co.uk' })
 await api('POST', 'domains', { names: 'free-lunch.app', note: 'For the side project' })
 await api('POST', 'domains', { names: 'acme.net', note: 'Ask the owner first' })
 await api('PATCH', 'domains/acme.net', { paused: true })
+const eu = ['eu-central-waw', 'eu-south-mil', 'eu-west-gra', 'eu-west-lim', 'eu-west-rbx', 'eu-west-sbg']
+await api('POST', 'vps', { subsidiary: 'FR', plan: 'vps-2025-model1', planName: 'VPS-1', datacenters: eu, note: 'Cheapest one' })
+await api('POST', 'vps', { subsidiary: 'FR', plan: 'vps-2025-model2', planName: 'VPS-2', datacenters: ['ca-east-bhs'] })
+await api('POST', 'vps', { subsidiary: 'FR', plan: 'vps-2025-model3', planName: 'VPS-3', datacenters: [] })
+await api('POST', 'vps', { subsidiary: 'FR', plan: 'vps-2025-model4', planName: 'VPS-4', datacenters: ['eu-west-gra', 'eu-west-rbx'] })
 await api('POST', 'targets', { name: 'Phone (ntfy)', url: 'ntfy://dropcatch-alerts', enabled: true })
 await api('POST', 'targets', { name: 'Telegram', url: 'tgram://123456789:AAF-token/987654', enabled: true })
 await api('POST', 'targets', { name: 'E-mail', url: 'mailtos://me:app-password@example.com', enabled: false })
@@ -33,8 +41,8 @@ await api('POST', 'targets/' + (await api('GET', 'state')).targets[0].id + '/tes
 
 // Wait for the first checks; the monitor pauses between registry queries.
 for (let i = 0; i < 120; i++) {
-  const { domains, checking } = await api('GET', 'state')
-  if (!checking.length && domains.every((d) => d.paused || d.checked)) break
+  const { domains, vps, checking } = await api('GET', 'state')
+  if (!checking.length && [...domains, ...vps].every((d) => d.paused || d.checked)) break
   await new Promise((r) => setTimeout(r, 500))
 }
 
@@ -71,6 +79,24 @@ await settle(p, 400)
 await shot(p, 'details')
 await p.keyboard.press('Escape')
 
+await open(p, 'vps')
+await shot(p, 'vps')
+
+await p.locator('button.name', { hasText: 'VPS-3' }).click()
+await settle(p, 400)
+await shot(p, 'vps-details')
+await p.getByRole('button', { name: 'Close' }).click()
+await settle(p, 300)
+
+await p.locator('header button', { hasText: 'Watch a VPS' }).click()
+await settle(p, 1200)
+await p.locator('select').nth(1).selectOption('vps-2025-model2')
+await settle(p, 800)
+await p.getByText('Only these:').click()
+await p.locator('label.region-name', { hasText: 'Europe' }).locator('input').check()
+await shot(p, 'vps-form')
+await p.keyboard.press('Escape')
+
 await open(p, 'notifications')
 await shot(p, 'notifications')
 
@@ -82,6 +108,8 @@ await open(p, 'domains')
 await shot(p, 'domains-light')
 
 p = await page(phone, { mobile: true })
+await open(p, 'vps')
+await shot(p, 'mobile-vps')
 await open(p, 'domains')
 await shot(p, 'mobile-domains')
 await p.locator('button.name', { hasText: 'free-lunch.app' }).click()

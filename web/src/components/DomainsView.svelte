@@ -22,7 +22,7 @@
         c[d.status]++
         return c
       },
-      { unknown: 0, registered: 0, dropping: 0, available: 0 } as Record<Status, number>,
+      { unknown: 0, registered: 0, dropping: 0, available: 0, 'out-of-stock': 0 } as Record<Status, number>,
     ),
   )
   const filters: { id: Status | 'all'; label: string }[] = [

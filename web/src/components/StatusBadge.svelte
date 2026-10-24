@@ -25,7 +25,8 @@
     background: color-mix(in srgb, var(--c) 14%, transparent);
   }
 
-  .registered {
+  .registered,
+  .out-of-stock {
     --c: var(--registered);
   }
 

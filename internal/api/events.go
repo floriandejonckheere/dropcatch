@@ -9,7 +9,7 @@ import (
 )
 
 type event struct {
-	Type string // domain, domains, removed, targets, settings, checking
+	Type string // domain, domains, removed, vps, vpsRemoved, targets, settings, checking
 	Data any
 }
 

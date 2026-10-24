@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/floriandejonckheere/dropcatch/internal/lookup"
+	"github.com/floriandejonckheere/dropcatch/internal/ovh"
 	"github.com/floriandejonckheere/dropcatch/internal/store"
 )
 
@@ -33,7 +34,31 @@ func (f *fakeLookup) set(name string, status lookup.Status, err error) {
 	f.errs[name] = err
 }
 
-type sent struct{ url, title, kind string }
+type fakeOVH struct {
+	mu    sync.Mutex
+	stock map[string][]ovh.Datacenter // by plan
+	errs  map[string]error
+}
+
+func (f *fakeOVH) Stock(_ context.Context, subsidiary, plan string) ([]ovh.Datacenter, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.stock[plan], f.errs[plan]
+}
+
+// set gives plan stock in the datacenters marked with a "+" prefix.
+func (f *fakeOVH) set(plan string, err error, codes ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var dcs []ovh.Datacenter
+	for _, c := range codes {
+		code, avail := strings.CutPrefix(c, "+")
+		dcs = append(dcs, ovh.Datacenter{Code: code, Name: ovh.DatacenterName(code), Region: ovh.RegionOf(code), Available: avail})
+	}
+	f.stock[plan], f.errs[plan] = dcs, err
+}
+
+type sent struct{ url, title, body, kind string }
 
 type fakeNotifier struct {
 	mu   sync.Mutex
@@ -43,7 +68,7 @@ type fakeNotifier struct {
 func (f *fakeNotifier) Send(_ context.Context, url, title, body, kind string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.sent = append(f.sent, sent{url, title, kind})
+	f.sent = append(f.sent, sent{url, title, body, kind})
 	if strings.HasPrefix(url, "bad://") {
 		return errors.New("unreachable")
 	}
@@ -74,7 +99,7 @@ func setup(t *testing.T, domains ...string) (*Monitor, *store.Store, *fakeLookup
 	})
 	l := &fakeLookup{results: map[string]lookup.Result{}, errs: map[string]error{}}
 	n := &fakeNotifier{}
-	m := New(st, l, n)
+	m := New(st, l, &fakeOVH{stock: map[string][]ovh.Datacenter{}, errs: map[string]error{}}, n)
 	m.Pause = time.Millisecond
 	return m, st, l, n
 }
@@ -200,4 +225,72 @@ func TestSchedule(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("domains not checked: %+v", st.Snapshot().Domains)
+}
+
+func TestVPS(t *testing.T) {
+	m, st, _, n := setup(t)
+	o := m.ovh.(*fakeOVH)
+	var any, gra *store.VPS
+	_ = st.Update(func(s *store.State) error {
+		a, _ := s.AddVPS(store.VPS{Subsidiary: "FR", Plan: "vps-1", PlanName: "VPS-1"}, time.Now())
+		g, _ := s.AddVPS(store.VPS{Subsidiary: "FR", Plan: "vps-1", PlanName: "VPS-1", Datacenters: []string{"eu-west-gra"}}, time.Now())
+		any, gra = a, g
+		return nil
+	})
+	ctx := context.Background()
+	check := func(id string) []string {
+		m.check(ctx, VPSKey(id))
+		var titles []string
+		for i, s := range n.take() {
+			if i%2 == 0 {
+				titles = append(titles, s.title+" | "+s.kind)
+			}
+		}
+		return titles
+	}
+	steps := []struct {
+		stock []string
+		err   error
+		any   string // titles for the watch of any datacenter
+		gra   string // and for the one of Gravelines only
+	}{
+		{[]string{"eu-west-gra", "eu-west-sbg"}, nil, "", ""},
+		{[]string{"eu-west-gra", "+eu-west-sbg"}, nil, "VPS-1 is available | success", ""},
+		{nil, errors.New("timeout"), "", ""},
+		{[]string{"+eu-west-gra", "+eu-west-sbg"}, nil, "VPS-1 is available | success", "VPS-1 is available | success"},
+		{[]string{"+eu-west-gra", "eu-west-sbg"}, nil, "", ""},
+		{[]string{"eu-west-gra", "eu-west-sbg"}, nil, "VPS-1 is out of stock | warning", "VPS-1 is out of stock | warning"},
+	}
+	for i, s := range steps {
+		o.set("vps-1", s.err, s.stock...)
+		if got := strings.Join(check(any.ID), ","); got != s.any {
+			t.Errorf("step %d, any datacenter: sent %q, want %q", i, got, s.any)
+		}
+		if got := strings.Join(check(gra.ID), ","); got != s.gra {
+			t.Errorf("step %d, Gravelines: sent %q, want %q", i, got, s.gra)
+		}
+	}
+
+	v := st.Snapshot().VPSWatch(any.ID)
+	if v.Status != store.OutOfStock || v.Error != "" || len(v.Stock) != 2 || len(v.History) != 5 {
+		t.Fatalf("watch = %+v", v)
+	}
+	if v.History[2].Detail != "Gravelines, France; Strasbourg, France" {
+		t.Errorf("history = %+v", v.History)
+	}
+
+	// The body names the new datacenters and links to the order page.
+	o.set("vps-1", nil, "+eu-west-gra", "eu-west-sbg")
+	m.check(ctx, VPSKey(gra.ID))
+	if got := n.take(); len(got) != 2 || !strings.Contains(got[0].body, "in Gravelines, France: https://www.ovhcloud.com/") {
+		t.Fatalf("sent %+v", got)
+	}
+
+	// VPS watches are scheduled with the domains, and requested checks of
+	// removed watches are skipped.
+	_ = st.Update(func(s *store.State) error { return s.RemoveVPS(any.ID) })
+	m.Check(VPSKey(any.ID), VPSKey(gra.ID))
+	if key, _ := m.next(); key != VPSKey(gra.ID) {
+		t.Fatalf("next = %q", key)
+	}
 }
