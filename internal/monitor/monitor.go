@@ -1,8 +1,12 @@
-// Package monitor checks the monitored domains periodically and sends
-// notifications when their status changes.
+// Package monitor checks the monitored domains and VPS plans periodically
+// and sends notifications when their status changes.
 //
 // Checks run one at a time, with a pause in between, because registries
-// rate-limit their RDAP and WHOIS servers per client.
+// rate-limit their RDAP and WHOIS servers per client, and OVH its API.
+//
+// Domains and VPS watches share one queue. They are identified by a key:
+// the domain name, or "vps:" and the watch's ID (domain names cannot
+// contain a colon).
 package monitor
 
 import (
@@ -17,6 +21,7 @@ import (
 
 	"github.com/floriandejonckheere/dropcatch/internal/lookup"
 	"github.com/floriandejonckheere/dropcatch/internal/notify"
+	"github.com/floriandejonckheere/dropcatch/internal/ovh"
 	"github.com/floriandejonckheere/dropcatch/internal/store"
 )
 
@@ -24,11 +29,15 @@ type Lookuper interface {
 	Lookup(ctx context.Context, name string) (lookup.Result, error)
 }
 
+type StockChecker interface {
+	Stock(ctx context.Context, subsidiary, plan string) ([]ovh.Datacenter, error)
+}
+
 type Notifier interface {
 	Send(ctx context.Context, url, title, body, kind string) error
 }
 
-// Message is a notification about a domain.
+// Message is a notification about a domain or VPS.
 type Message struct {
 	Title, Body, Kind string
 }
@@ -36,15 +45,17 @@ type Message struct {
 type Monitor struct {
 	store  *store.Store
 	lookup Lookuper
+	ovh    StockChecker
 	notify Notifier
 
 	// Pause between two checks.
 	Pause time.Duration
-	// Called after a domain or target changed, and when a check starts or
+	// Called after a domain, VPS watch or target changed, and when a check starts or
 	// ends, so that clients can be updated.
 	OnDomain   func(store.Domain)
+	OnVPS      func(store.VPS)
 	OnTargets  func()
-	OnChecking func(names []string)
+	OnChecking func(keys []string)
 
 	now  func() time.Time
 	wake chan struct{}
@@ -54,13 +65,15 @@ type Monitor struct {
 	checking string
 }
 
-func New(s *store.Store, l Lookuper, n Notifier) *Monitor {
+func New(s *store.Store, l Lookuper, o StockChecker, n Notifier) *Monitor {
 	return &Monitor{
 		store:      s,
 		lookup:     l,
+		ovh:        o,
 		notify:     n,
 		Pause:      2 * time.Second,
 		OnDomain:   func(store.Domain) {},
+		OnVPS:      func(store.VPS) {},
 		OnTargets:  func() {},
 		OnChecking: func([]string) {},
 		now:        time.Now,
@@ -68,7 +81,13 @@ func New(s *store.Store, l Lookuper, n Notifier) *Monitor {
 	}
 }
 
-// Run checks domains as they become due, until ctx is cancelled.
+// VPSKey returns the queue key of a VPS watch.
+func VPSKey(id string) string { return vpsPrefix + id }
+
+const vpsPrefix = "vps:"
+
+// Run checks domains and VPS watches as they become due, until ctx is
+// cancelled.
 func (m *Monitor) Run(ctx context.Context) {
 	for {
 		name, wait := m.next()
@@ -107,13 +126,19 @@ func (m *Monitor) Wake() {
 	}
 }
 
-// Check queues the named domains (all active domains when none are given)
-// to be checked as soon as possible.
+// Check queues the given keys (all active domains and VPS watches when
+// none are given) to be checked as soon as possible.
 func (m *Monitor) Check(names ...string) {
 	if len(names) == 0 {
-		for _, d := range m.store.Snapshot().Domains {
+		st := m.store.Snapshot()
+		for _, d := range st.Domains {
 			if !d.Paused {
 				names = append(names, d.Name)
+			}
+		}
+		for _, v := range st.VPS {
+			if !v.Paused {
+				names = append(names, VPSKey(v.ID))
 			}
 		}
 	}
@@ -128,7 +153,7 @@ func (m *Monitor) Check(names ...string) {
 	m.Wake()
 }
 
-// Checking returns the domain being checked and the queued ones.
+// Checking returns the key being checked and the queued ones.
 func (m *Monitor) Checking() []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -141,17 +166,17 @@ func (m *Monitor) Checking() []string {
 
 func (m *Monitor) publishChecking() { m.OnChecking(m.Checking()) }
 
-// next returns the domain to check now, or how long to wait for the next
+// next returns the key to check now, or how long to wait for the next
 // one to become due.
 func (m *Monitor) next() (string, time.Duration) {
 	st := m.store.Snapshot()
 	m.mu.Lock()
 	for len(m.queue) > 0 {
-		name := m.queue[0]
+		key := m.queue[0]
 		m.queue = m.queue[1:]
-		if st.Domain(name) != nil {
+		if id, ok := strings.CutPrefix(key, vpsPrefix); (ok && st.VPSWatch(id) != nil) || (!ok && st.Domain(key) != nil) {
 			m.mu.Unlock()
-			return name, 0
+			return key, 0
 		}
 	}
 	m.mu.Unlock()
@@ -160,17 +185,23 @@ func (m *Monitor) next() (string, time.Duration) {
 	now := m.now()
 	var due string
 	var dueAt time.Time
-	for _, d := range st.Domains {
-		if d.Paused {
-			continue
+	consider := func(key string, paused bool, checked *time.Time) {
+		if paused {
+			return
 		}
 		at := now
-		if d.Checked != nil {
-			at = d.Checked.Add(interval)
+		if checked != nil {
+			at = checked.Add(interval)
 		}
 		if due == "" || at.Before(dueAt) {
-			due, dueAt = d.Name, at
+			due, dueAt = key, at
 		}
+	}
+	for _, d := range st.Domains {
+		consider(d.Name, d.Paused, d.Checked)
+	}
+	for _, v := range st.VPS {
+		consider(VPSKey(v.ID), v.Paused, v.Checked)
 	}
 	switch {
 	case due == "":
@@ -182,10 +213,10 @@ func (m *Monitor) next() (string, time.Duration) {
 	}
 }
 
-// check looks up one domain, records the result and sends notifications.
-func (m *Monitor) check(ctx context.Context, name string) {
+// check checks the domain or VPS watch with the given key.
+func (m *Monitor) check(ctx context.Context, key string) {
 	m.mu.Lock()
-	m.checking = name
+	m.checking = key
 	m.mu.Unlock()
 	m.publishChecking()
 	defer func() {
@@ -194,7 +225,16 @@ func (m *Monitor) check(ctx context.Context, name string) {
 		m.mu.Unlock()
 		m.publishChecking()
 	}()
+	if id, ok := strings.CutPrefix(key, vpsPrefix); ok {
+		m.checkVPS(ctx, id)
+	} else {
+		m.checkDomain(ctx, key)
+	}
+}
 
+// checkDomain looks up one domain, records the result and sends
+// notifications.
+func (m *Monitor) checkDomain(ctx context.Context, name string) {
 	st := m.store.Snapshot()
 	lctx, cancel := context.WithTimeout(ctx, time.Duration(st.Settings.Timeout)*time.Second)
 	res, err := m.lookup.Lookup(lctx, name)

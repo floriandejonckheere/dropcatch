@@ -2,6 +2,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"github.com/floriandejonckheere/dropcatch/internal/config"
 	"github.com/floriandejonckheere/dropcatch/internal/monitor"
 	"github.com/floriandejonckheere/dropcatch/internal/notify"
+	"github.com/floriandejonckheere/dropcatch/internal/ovh"
 	"github.com/floriandejonckheere/dropcatch/internal/store"
 )
 
@@ -25,20 +27,28 @@ type Server struct {
 	cfg     *config.Config
 	store   *store.Store
 	monitor *monitor.Monitor
+	ovh     OVH
 	apprise *notify.Apprise
 	auth    *auth.Auth // nil when authentication is disabled
 	events  *hub
 	ui      fs.FS
 }
 
+// OVH reads VPS plans and stock (an *ovh.Client).
+type OVH interface {
+	Plans(ctx context.Context, subsidiary string) (ovh.Catalog, error)
+	Stock(ctx context.Context, subsidiary, plan string) ([]ovh.Datacenter, error)
+}
+
 // New wires the server to the monitor's change callbacks.
-func New(cfg *config.Config, st *store.Store, m *monitor.Monitor, apprise *notify.Apprise, ui fs.FS) (*Server, error) {
+func New(cfg *config.Config, st *store.Store, m *monitor.Monitor, o OVH, apprise *notify.Apprise, ui fs.FS) (*Server, error) {
 	a, err := auth.New(cfg.Username, cfg.Password, cfg.PasswordHash, cfg.Secret, cfg.DataDir)
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, store: st, monitor: m, apprise: apprise, auth: a, events: newHub(), ui: ui}
+	s := &Server{cfg: cfg, store: st, monitor: m, ovh: o, apprise: apprise, auth: a, events: newHub(), ui: ui}
 	m.OnDomain = func(d store.Domain) { s.events.publish("domain", view(d)) }
+	m.OnVPS = func(v store.VPS) { s.events.publish("vps", v) }
 	m.OnTargets = func() { s.events.publish("targets", s.store.Snapshot().Targets) }
 	m.OnChecking = func(names []string) { s.events.publish("checking", names) }
 	return s, nil
@@ -60,6 +70,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/domains/{name}", s.handleDomainRemove)
 	mux.HandleFunc("POST /api/domains/{name}/check", s.handleDomainCheck)
 	mux.HandleFunc("POST /api/check", s.handleCheckAll)
+
+	mux.HandleFunc("GET /api/ovh/plans", s.handleOVHPlans)
+	mux.HandleFunc("GET /api/ovh/stock", s.handleOVHStock)
+	mux.HandleFunc("POST /api/vps", s.handleVPSAdd)
+	mux.HandleFunc("PATCH /api/vps/{id}", s.handleVPSEdit)
+	mux.HandleFunc("DELETE /api/vps/{id}", s.handleVPSRemove)
+	mux.HandleFunc("POST /api/vps/{id}/check", s.handleVPSCheck)
 
 	mux.HandleFunc("POST /api/targets", s.handleTargetAdd)
 	mux.HandleFunc("PATCH /api/targets/{id}", s.handleTargetEdit)
@@ -85,8 +102,9 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
-		"version": Version,
-		"apprise": s.apprise.Path != "",
+		"version":         Version,
+		"apprise":         s.apprise.Path != "",
+		"ovhSubsidiaries": ovh.Subsidiaries,
 		"limits": map[string]int{
 			"minInterval": store.MinInterval,
 			"maxInterval": store.MaxInterval,
@@ -106,6 +124,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	st := s.store.Snapshot()
 	writeJSON(w, map[string]any{
 		"domains":  views(st.Domains),
+		"vps":      st.VPS,
 		"targets":  st.Targets,
 		"settings": st.Settings,
 		"checking": s.monitor.Checking(),

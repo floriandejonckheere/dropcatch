@@ -16,6 +16,7 @@ import (
 	"github.com/floriandejonckheere/dropcatch/internal/lookup"
 	"github.com/floriandejonckheere/dropcatch/internal/monitor"
 	"github.com/floriandejonckheere/dropcatch/internal/notify"
+	"github.com/floriandejonckheere/dropcatch/internal/ovh"
 	"github.com/floriandejonckheere/dropcatch/internal/store"
 	"github.com/floriandejonckheere/dropcatch/web"
 )
@@ -45,9 +46,11 @@ func run() error {
 	}
 	lc := lookup.New("dropcatch/" + api.Version)
 	lc.BootstrapURL = cfg.RDAPBootstrap
-	mon := monitor.New(st, lc, apprise)
+	oc := ovh.New("dropcatch/" + api.Version)
+	oc.BaseURL = cfg.OVHAPI
+	mon := monitor.New(st, lc, oc, apprise)
 
-	server, err := api.New(cfg, st, mon, apprise, web.Dist())
+	server, err := api.New(cfg, st, mon, oc, apprise, web.Dist())
 	if err != nil {
 		return err
 	}

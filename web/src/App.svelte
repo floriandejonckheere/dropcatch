@@ -7,6 +7,7 @@
   import Menu from './components/Menu.svelte'
   import SettingsView from './components/SettingsView.svelte'
   import TargetsView from './components/TargetsView.svelte'
+  import VPSView from './components/VPSView.svelte'
   import Toasts from './components/Toasts.svelte'
   import { actions } from './lib/actions'
   import { router, type View } from './lib/router.svelte'
@@ -30,13 +31,16 @@
     }
   })
 
-  const available = $derived(app.domains.filter((d) => d.status === 'available' && !d.paused).length)
+  const available = $derived(
+    [...app.domains, ...app.vps].filter((x) => x.status === 'available' && !x.paused).length,
+  )
   $effect(() => {
     document.title = available ? `(${available}) Dropcatch` : 'Dropcatch'
   })
 
   const tabs: { view: View; label: string; icon: string }[] = [
     { view: 'domains', label: 'Domains', icon: 'globe' },
+    { view: 'vps', label: 'VPS', icon: 'server' },
     { view: 'notifications', label: 'Notifications', icon: 'bell' },
     { view: 'settings', label: 'Settings', icon: 'settings' },
   ]
@@ -67,14 +71,16 @@
           </a>
         {/each}
       </nav>
-      <button class="pill check-all" onclick={() => actions.checkAll()} disabled={!app.domains.length || checkingAll} title="Check all domains now">
+      <button class="pill check-all" onclick={() => actions.checkAll()} disabled={(!app.domains.length && !app.vps.length) || checkingAll} title="Check all domains and VPS now">
         <span class="icon" class:spin={app.checking.length > 0}><Icon name="refresh" size={16} /></span>
         <span class="label">{app.checking.length ? `Checking ${app.checking.length}…` : 'Check all'}</span>
       </button>
     </header>
 
     <main>
-      {#if router.view === 'notifications'}
+      {#if router.view === 'vps'}
+        <VPSView {now} />
+      {:else if router.view === 'notifications'}
         <TargetsView {now} />
       {:else if router.view === 'settings'}
         <SettingsView />

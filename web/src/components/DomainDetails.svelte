@@ -167,6 +167,10 @@
     border-top: 1px solid var(--border);
   }
 
+  .history li > span:first-child {
+    flex: none;
+  }
+
   .spacer {
     flex: 1;
   }

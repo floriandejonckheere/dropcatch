@@ -1,6 +1,6 @@
 # Dropcatch
 
-A small, self-hosted domain availability monitor. Add the domain names you want, and Dropcatch asks their registries periodically whether they are still registered. When one becomes available, it notifies you on your phone, chat or e-mail through [Apprise](https://github.com/caronc/apprise).
+A small, self-hosted availability monitor for domain names and OVHcloud VPS. Add the domain names you want, and Dropcatch asks their registries periodically whether they are still registered. Pick the OVHcloud VPS plans you want and the datacenters or regions they should run in, and Dropcatch watches OVH's stock. When something becomes available, it notifies you on your phone, chat or e-mail through [Apprise](https://github.com/caronc/apprise).
 
 It runs as a single container with a small web UI, for one user behind a password.
 
@@ -10,29 +10,38 @@ It runs as a single container with a small web UI, for one user behind a passwor
 
 - **Watch domains**: add several at once (`example.com example.net`), with an optional note; pause, resume or remove them. Internationalised names (`bücher.de`) and pasted URLs work; subdomains are reduced to the registered domain.
 - **Registration status**: registered, dropping (expired, in the redemption or pending delete period) or available, with the registrar, registration and expiry dates, the registry's status codes and a history of status changes
-- **Periodic checks** at an interval you choose (5 minutes to 7 days), one query at a time so that registries do not rate-limit you; check one or all domains on demand
-- **Notifications** through any [Apprise URL](https://github.com/caronc/apprise/wiki#notification-services): ntfy, Telegram, Discord, Slack, Pushover, Gotify, e-mail and many more. Send a test from the UI. Optionally also notified when a domain enters its deletion period, is restored by its owner or is registered again.
+- **Watch OVHcloud VPS**: choose the OVH shop (country), a plan from OVH's catalog (with its specifications and price) and any datacenter, whole regions (Europe, North America, Asia-Pacific) or individual datacenters. See the current stock of every datacenter, with a link to order.
+- **Periodic checks** at an interval you choose (5 minutes to 7 days), one query at a time so that registries and OVH do not rate-limit you; check one or everything on demand
+- **Notifications** through any [Apprise URL](https://github.com/caronc/apprise/wiki#notification-services): ntfy, Telegram, Discord, Slack, Pushover, Gotify, e-mail and many more. Send a test from the UI. Optionally also notified when a domain enters its deletion period, is restored by its owner or is registered again, and when a VPS sells out again.
 - **Live updates**: check results appear without reloading
 - **Install** on a phone's home screen or as a desktop app
 - **Security**: password login with signed session cookies, rate-limited login attempts, CSRF protection
 
 ## Screenshots
 
-| Domain details | Notification targets |
+| VPS | Watching a VPS |
 |---|---|
-| ![Details of a domain in its deletion period](docs/screenshots/details.jpg) | ![Notification targets](docs/screenshots/notifications.jpg) |
-| **Settings** | **Light theme** |
-| ![Settings](docs/screenshots/settings.jpg) | ![Domains in the light theme](docs/screenshots/domains-light.jpg) |
+| ![VPS watches with their stock](docs/screenshots/vps.jpg) | ![Choosing a plan and datacenters](docs/screenshots/vps-form.jpg) |
+| **Domain details** | **VPS stock** |
+| ![Details of a domain in its deletion period](docs/screenshots/details.jpg) | ![Stock of a VPS plan per datacenter](docs/screenshots/vps-details.jpg) |
+| **Notification targets** | **Settings** |
+| ![Notification targets](docs/screenshots/notifications.jpg) | ![Settings](docs/screenshots/settings.jpg) |
+| **Light theme** | |
+| ![Domains in the light theme](docs/screenshots/domains-light.jpg) | |
 
 <p>
   <img src="docs/screenshots/mobile-domains.jpg" alt="Domains on a phone" width="260">
   &nbsp;
   <img src="docs/screenshots/mobile-details.jpg" alt="Domain details on a phone" width="260">
+  &nbsp;
+  <img src="docs/screenshots/mobile-vps.jpg" alt="VPS on a phone" width="260">
 </p>
 
-The screenshots are generated against a fake registry with `make screenshots` (see [Development](#development)).
+The screenshots are generated against a fake registry and OVH API with `make screenshots` (see [Development](#development)).
 
 ## How it works
+
+### Domains
 
 Dropcatch asks the registry of each domain's TLD:
 
@@ -41,7 +50,15 @@ Dropcatch asks the registry of each domain's TLD:
 
 A domain whose registry status includes *pending delete* or *redemption period* (or `QUARANTINE` in WHOIS) is shown as **dropping**: its registration expired and the registry deletes it at the end of that period, unless the owner restores it. When the status changes to **available**, every enabled notification target is notified, once.
 
-Checks run one at a time, with a two-second pause in between. A failed check (timeout, rate limit) keeps the last known status and is shown on the domain; it does not send a notification.
+### OVHcloud VPS
+
+Dropcatch reads OVH's public API, which needs no OVH account: the stock of a plan comes from `/vps/order/rule/datacenter`, which lists every datacenter that offers it as available or out of stock, and the plans from the public order catalog. Both depend on the OVH shop (`FR`, `DE`, `CA`, `US`, …), which also picks the API: `eu.api.ovh.com`, `ca.api.ovh.com`, or `api.us.ovhcloud.com` for OVHcloud US, which has its own plans and datacenters.
+
+A plan counts as in stock in a datacenter when both the plan and its Linux images are available there. A watch is **available** when at least one datacenter it watches has stock. Every time stock appears in a watched datacenter that had none, every enabled notification target is notified with the datacenters and a link to order.
+
+### Checks
+
+Domains and VPS share one schedule and one interval. Checks run one at a time, with a two-second pause in between. A failed check (timeout, rate limit) keeps the last known status and is shown on the domain or VPS; it does not send a notification.
 
 ## Quick start (Docker)
 
@@ -104,10 +121,10 @@ For frontend development, also run `cd web && npm run dev`. Vite proxies `/api` 
 | `make test` | `go vet` and the Go tests |
 | `make check` | `make test` plus the frontend type check |
 | `make build` | Builds the web UI and the `./dropcatch` binary |
-| `make fakeregistry` | Runs a fake RDAP registry on port 8053 for local testing |
+| `make fakeregistry` | Runs a fake RDAP registry and OVH API on port 8053 for local testing |
 | `make screenshots` | Regenerates `docs/screenshots` |
 
-The fake registry answers for common TLDs: names starting with `free` are available, names starting with `drop` are pending deletion, and all others are registered. Point Dropcatch at it with `--rdap-bootstrap http://127.0.0.1:8053/dns.json`. `make screenshots` needs Playwright's Chromium (`cd web && npx playwright install chromium`, or set `CHROMIUM_PATH`). Regenerate the screenshots whenever the UI changes.
+The fake registry answers for common TLDs: names starting with `free` are available, names starting with `drop` are pending deletion, and all others are registered. It also offers four VPS plans: VPS-1 is out of stock everywhere (until `--restock-after`, if given, then in Roubaix), and the others have stock in some datacenters. Point Dropcatch at it with `--rdap-bootstrap http://127.0.0.1:8053/dns.json --ovh-api http://127.0.0.1:8053/v1`. `make screenshots` needs Playwright's Chromium (`cd web && npx playwright install chromium`, or set `CHROMIUM_PATH`). Regenerate the screenshots whenever the UI changes.
 
 Instructions for coding agents are in [AGENTS.md](AGENTS.md).
 
@@ -127,6 +144,7 @@ These are set when starting Dropcatch; the check interval and notifications are 
 | `--password-file`, `--password-hash-file`, `--secret-file` | | Read the value from a file instead, such as a Docker secret |
 | `--apprise` | auto-detected on `PATH` | Path to the Apprise CLI |
 | `--rdap-bootstrap` | `https://data.iana.org/rdap/dns.json` | RDAP bootstrap file that lists the RDAP server of each TLD |
+| `--ovh-api` | the API of each OVH shop | Base URL of the OVH API (such as `https://eu.api.ovh.com/v1`), for all shops |
 
 In Docker, `PUID` and `PGID` (default `1000`) set the user and group Dropcatch runs as.
 

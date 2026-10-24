@@ -1,9 +1,9 @@
 // Hash routes, so that reloading works under any base path without server
-// support: #/domains, #/notifications, #/settings.
+// support: #/domains, #/vps, #/notifications, #/settings.
 
-export type View = 'domains' | 'notifications' | 'settings'
+export type View = 'domains' | 'vps' | 'notifications' | 'settings'
 
-const views: View[] = ['domains', 'notifications', 'settings']
+const views: View[] = ['domains', 'vps', 'notifications', 'settings']
 
 function parse(): View {
   const v = location.hash.replace(/^#\/?/, '') as View

@@ -1,10 +1,18 @@
-import type { Status } from './api'
+import type { Region, Status } from './api'
 
 export const statusLabel: Record<Status, string> = {
   unknown: 'Not checked',
   registered: 'Registered',
   dropping: 'Dropping',
   available: 'Available',
+  'out-of-stock': 'Out of stock',
+}
+
+export const regionLabel: Record<Region, string> = {
+  europe: 'Europe',
+  'north-america': 'North America',
+  'asia-pacific': 'Asia-Pacific',
+  other: 'Other',
 }
 
 const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })

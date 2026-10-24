@@ -25,6 +25,9 @@ type Config struct {
 	// RDAPBootstrap is the URL of the RDAP bootstrap file, which lists
 	// the RDAP server of each TLD.
 	RDAPBootstrap string
+	// OVHAPI replaces the OVH API host (for the fake registry); empty
+	// uses the host of each subsidiary.
+	OVHAPI string
 
 	// Authentication is enabled when Password or PasswordHash is set.
 	Username     string
@@ -53,6 +56,7 @@ func Parse(args []string, getenv func(string) string) (*Config, error) {
 	fs.StringVar(&c.BasePath, "base-path", env("base-path", "/"), "URL path prefix when served behind a reverse proxy")
 	apprise := fs.String("apprise", env("apprise", ""), "path to the apprise CLI (auto-detected on PATH when empty)")
 	fs.StringVar(&c.RDAPBootstrap, "rdap-bootstrap", env("rdap-bootstrap", "https://data.iana.org/rdap/dns.json"), "URL of the RDAP bootstrap file (RFC 9224)")
+	fs.StringVar(&c.OVHAPI, "ovh-api", env("ovh-api", ""), "base URL of the OVH API, such as https://eu.api.ovh.com/v1 (default: the API of each subsidiary)")
 	fs.StringVar(&c.Username, "username", env("username", ""), "username for login (optional; requires a password)")
 	fs.StringVar(&c.Password, "password", env("password", ""), "password for login; enables authentication")
 	fs.StringVar(&c.PasswordHash, "password-hash", env("password-hash", ""), "bcrypt hash of the password (alternative to --password)")
