@@ -249,7 +249,17 @@ func TestSchedule(t *testing.T) {
 	})
 	l.set("a.com", lookup.Registered, nil)
 	l.set("b.com", lookup.Available, nil)
-	go m.Run(ctx)
+	done := make(chan struct{})
+	go func() {
+		m.Run(ctx)
+		close(done)
+	}()
+	// Run may be saving a check result: let it finish before the data
+	// directory is removed.
+	defer func() {
+		cancel()
+		<-done
+	}()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		s := st.Snapshot()
