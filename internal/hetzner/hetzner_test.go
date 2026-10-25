@@ -15,6 +15,10 @@ const serverTypes = `{"server_types":[
  {"name":"cx23","description":"CX23","cores":2,"memory":4.0,"disk":40,"storage_type":"local","cpu_type":"shared","architecture":"x86","category":"cost_optimized",
   "prices":[{"location":"fsn1","price_monthly":{"net":"3.4900","gross":"4.1531"}},{"location":"hel1","price_monthly":{"net":"3.2900","gross":"3.9151"}}],
   "locations":[{"id":1,"name":"fsn1","available":false,"recommended":false,"deprecation":null},{"id":3,"name":"hel1","available":true,"recommended":true,"deprecation":null}]},
+ {"name":"cpx12","description":"CPX12","cores":1,"memory":2.0,"disk":40,"storage_type":"local","cpu_type":"shared","architecture":"x86",
+  "prices":[{"location":"fsn1","price_monthly":{"net":"2.9900","gross":"3.5581"}}],"locations":[{"id":1,"name":"fsn1","available":true,"deprecation":null}]},
+ {"name":"cx103","description":"CX103","cores":32,"memory":64.0,"disk":640,"storage_type":"local","cpu_type":"shared","architecture":"x86",
+  "prices":[{"location":"fsn1","price_monthly":{"net":"49.9900","gross":"59.4881"}}],"locations":[{"id":1,"name":"fsn1","available":true,"deprecation":null}]},
  {"name":"cax11","description":"CAX11","cores":2,"memory":4.0,"disk":40,"storage_type":["local"],"cpu_type":"shared","architecture":"arm","category":"cost_optimized",
   "prices":[{"location":"fsn1","price_monthly":{"net":"3.7900","gross":"4.5101"}}],
   "locations":[{"id":1,"name":"fsn1","available":true,"recommended":false,"deprecation":null}]},
@@ -107,7 +111,7 @@ func TestPlans(t *testing.T) {
 		codes = append(codes, p.Code)
 	}
 	// Shared x86, shared Arm, dedicated; the retired cx22 is left out.
-	if strings.Join(codes, ",") != "cx23,cax11,ccx13" {
+	if strings.Join(codes, ",") != "cx23,cx103,cpx12,cax11,ccx13" {
 		t.Fatalf("plans = %v", codes)
 	}
 	p := cat.Plans[0]

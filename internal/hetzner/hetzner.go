@@ -280,14 +280,33 @@ func (c *Client) Plans(ctx context.Context) (Catalog, error) {
 		cat.Plans = append(cat.Plans, p)
 	}
 	// Grouped as the form shows them: shared before dedicated, x86
-	// before Arm, then by size.
+	// before Arm, then by series and size.
 	slices.SortFunc(cat.Plans, func(a, b Plan) int {
-		return cmp.Or(cmp.Compare(b.CPUType, a.CPUType), cmp.Compare(b.Architecture, a.Architecture), cmp.Compare(a.Price, b.Price), cmp.Compare(a.Code, b.Code))
+		return cmp.Or(cmp.Compare(b.CPUType, a.CPUType), cmp.Compare(b.Architecture, a.Architecture), compareNames(a.Code, b.Code))
 	})
 	c.mu.Lock()
 	c.catalog, c.catalogAt = &cat, c.now()
 	c.mu.Unlock()
 	return cat, nil
+}
+
+// compareNames orders server types by series, then by number within it:
+// cx22, cx32, cx42, then cpx11, cpx21. Series with the shorter prefix
+// come first (cx before cpx), as Hetzner lists them.
+func compareNames(a, b string) int {
+	sa, na := splitName(a)
+	sb, nb := splitName(b)
+	return cmp.Or(cmp.Compare(len(sa), len(sb)), cmp.Compare(sa, sb), cmp.Compare(na, nb), cmp.Compare(a, b))
+}
+
+// splitName splits "cpx22" into "cpx" and 22.
+func splitName(name string) (string, int) {
+	i := strings.IndexFunc(name, func(r rune) bool { return r >= '0' && r <= '9' })
+	if i < 0 {
+		return name, 0
+	}
+	n, _ := strconv.Atoi(name[i:])
+	return name[:i], n
 }
 
 func storage(v any) string {
