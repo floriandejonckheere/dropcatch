@@ -15,7 +15,8 @@ import (
 )
 
 var (
-	planCode       = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{1,63}$`)
+	// Plan codes are case-sensitive: Local Zone plans end in ".LZ".
+	planCode       = regexp.MustCompile(`^[a-z0-9][a-zA-Z0-9._-]{1,63}$`)
 	datacenterCode = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,39}$`)
 )
 
@@ -96,7 +97,7 @@ func (s *Server) handleVPSAdd(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	req.Plan = strings.ToLower(strings.TrimSpace(req.Plan))
+	req.Plan = strings.TrimSpace(req.Plan)
 	req.PlanName = strings.TrimSpace(req.PlanName)
 	switch {
 	case !ovh.ValidSubsidiary(req.Subsidiary):

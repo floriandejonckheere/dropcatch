@@ -275,4 +275,10 @@ func TestVPS(t *testing.T) {
 	if code := ts.do("PATCH", "/api/vps/"+v.ID, map[string]any{"paused": false}, nil); code != http.StatusNotFound {
 		t.Fatalf("edit removed: %d", code)
 	}
+
+	// OVH plan codes are case-sensitive.
+	var lz store.VPS
+	if code := ts.do("POST", "/api/vps", map[string]any{"subsidiary": "FR", "plan": "vps-2027-model1.LZ"}, &lz); code != http.StatusOK || lz.Plan != "vps-2027-model1.LZ" {
+		t.Fatalf("add a Local Zone plan: %d %+v", code, lz)
+	}
 }

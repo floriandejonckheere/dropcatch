@@ -104,6 +104,22 @@ var datacenterNames = map[string]string{
 	"ap-southeast-sgp": "Singapore",
 	"ap-southeast-syd": "Sydney, Australia",
 	"ap-south-mum":     "Mumbai, India",
+	// Local Zones, sold as the .LZ plans.
+	"eu-central-lz-prg": "Prague, Czech Republic",
+	"eu-south-lz-mad":   "Madrid, Spain",
+	"eu-west-lz-ams":    "Amsterdam, Netherlands",
+	"eu-west-lz-bru":    "Brussels, Belgium",
+	"eu-west-lz-mrs":    "Marseille, France",
+	"eu-west-lz-vie":    "Vienna, Austria",
+	"eu-west-lz-zrh":    "Zurich, Switzerland",
+	"us-east-lz-atl":    "Atlanta, United States",
+	"us-east-lz-dal":    "Dallas, United States",
+	"us-east-lz-mia":    "Miami, United States",
+	"us-east-lz-nyc":    "New York, United States",
+	"us-west-lz-den":    "Denver, United States",
+	"us-west-lz-lax":    "Los Angeles, United States",
+	"us-west-lz-pao":    "Palo Alto, United States",
+	"us-west-lz-sea":    "Seattle, United States",
 }
 
 // DatacenterName returns a readable name for a datacenter code.
