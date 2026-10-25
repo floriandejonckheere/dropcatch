@@ -6,6 +6,7 @@
   import Icon from './Icon.svelte'
   import Modal from './Modal.svelte'
   import StatusBadge from './StatusBadge.svelte'
+  import StockTimeline from './StockTimeline.svelte'
 
   let { vps: v, now, onclose, onedit }: { vps: VPS; now: number; onclose: () => void; onedit: () => void } = $props()
 
@@ -58,6 +59,10 @@
       {/each}
     </ul>
     {#if v.datacenters.length}<p class="hint">Datacenters you do not watch are dimmed.</p>{/if}
+  {/if}
+
+  {#if v.status !== 'unknown'}
+    <StockTimeline vps={v} {now} />
   {/if}
 
   {#if v.history?.length}

@@ -146,6 +146,7 @@ func (s *Server) handleCheckAll(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Interval      *int  `json:"interval"`
+		StockInterval *int  `json:"stockInterval"`
 		Timeout       *int  `json:"timeout"`
 		NotifyChanges *bool `json:"notifyChanges"`
 	}
@@ -156,6 +157,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	if !s.update(w, func(st *store.State) error {
 		if req.Interval != nil {
 			st.Settings.Interval = *req.Interval
+		}
+		if req.StockInterval != nil {
+			st.Settings.StockInterval = *req.StockInterval
 		}
 		if req.Timeout != nil {
 			st.Settings.Timeout = *req.Timeout

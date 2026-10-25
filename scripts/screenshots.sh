@@ -23,6 +23,9 @@ trap cleanup EXIT INT TERM
 printf '#!/bin/sh\nexit 0\n' >"$work/apprise"
 chmod +x "$work/apprise"
 
+# A VPS watch with a week of stock history.
+(cd "$root/web" && node scripts/seed.mjs "$work/data")
+
 port=${PORT:-8765}
 registry=${REGISTRY_PORT:-8053}
 "$work/fakeregistry" --listen "127.0.0.1:$registry" >"$work/registry.log" 2>&1 &

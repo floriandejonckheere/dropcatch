@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -81,8 +82,52 @@ func TestHistory(t *testing.T) {
 	}
 }
 
+func TestPeriods(t *testing.T) {
+	v := VPS{Status: Unknown, Datacenters: []string{"gra"}}
+	t0 := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+	at := func(m int) time.Time { return t0.Add(time.Duration(m) * time.Minute) }
+	stock := func(gra, sbg bool) []Stock {
+		return []Stock{{Code: "gra", Name: "Gravelines", Available: gra}, {Code: "sbg", Name: "Strasbourg", Available: sbg}}
+	}
+	v.SetStock(stock(false, false), at(0))
+	v.SetStock(stock(true, false), at(1))
+	v.SetStock(stock(true, true), at(2)) // unwatched datacenters are recorded too
+	v.SetStock(stock(true, true), at(3))
+	v.SetStock(stock(false, true), at(4))
+	v.SetStock(stock(true, false), at(5))
+	type period struct {
+		code       string
+		start, end int // minutes; -1 while it lasts
+	}
+	var got []period
+	for _, p := range v.Periods {
+		end := -1
+		if p.End != nil {
+			end = int(p.End.Sub(t0).Minutes())
+		}
+		got = append(got, period{p.Code, int(p.Start.Sub(t0).Minutes()), end})
+	}
+	want := []period{{"gra", 5, -1}, {"sbg", 2, 5}, {"gra", 1, 4}}
+	if !slices.Equal(got, want) {
+		t.Fatalf("periods = %v, want %v", got, want)
+	}
+
+	for i := range 2 * periodLimit {
+		v.SetStock(stock(i%2 == 0, false), at(10+i))
+	}
+	if len(v.Periods) != periodLimit {
+		t.Fatalf("%d periods kept", len(v.Periods))
+	}
+}
+
 func TestSettingsValidate(t *testing.T) {
-	for _, s := range []Settings{{Interval: 1, Timeout: 20}, {Interval: 60, Timeout: 500}, {Interval: MaxInterval + 1, Timeout: 20}} {
+	for _, s := range []Settings{
+		{Interval: 1, StockInterval: 2, Timeout: 20},
+		{Interval: 60, StockInterval: 2, Timeout: 500},
+		{Interval: MaxInterval + 1, StockInterval: 2, Timeout: 20},
+		{Interval: 60, StockInterval: 0, Timeout: 20},
+		{Interval: 60, StockInterval: MaxStockInterval + 1, Timeout: 20},
+	} {
 		if s.Validate() == nil {
 			t.Errorf("%+v is valid", s)
 		}

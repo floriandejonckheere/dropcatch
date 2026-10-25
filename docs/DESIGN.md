@@ -55,11 +55,12 @@ It follows the structure of [Wavr](https://github.com/floriandejonckheere/wavr):
 - Plans for the form come from `GET /v1/order/catalog/public/vps?ovhSubsidiary=…`: plans whose code starts with `vps` and that carry the `order-funnel:show` tag, sorted by name, with their monthly price (catalog prices are in hundred-millionths) and specifications from the plan's or its product's technical blob. The tag marks what OVH sells to new customers: the catalog also lists retired plans and upgrade paths from older ranges (`vps-essential-2-4-80-vps-2025-model2`), which reuse the plans' names and report stock everywhere but cannot be ordered. OVHcloud US sells one plan under one name in its own datacenters and, as `…-eu` and `…-ca`, in the European and Canadian ones; names shared by several plans get the code appended. The catalog is cached for six hours. If it cannot be loaded, the plan code can be typed in.
 - The subsidiary picks the API host: `api.us.ovhcloud.com` for `US` (OVHcloud US, a separate company with its own plans and datacenters), `ca.api.ovh.com` for the Canadian, Asian and World shops, `eu.api.ovh.com` otherwise. `--ovh-api` replaces it (for the fake registry).
 - The whole stock (every datacenter offering the plan) is stored, so the details show it and changing the watched datacenters recomputes the status without a query.
+- Stock periods: each watch records when each datacenter offering the plan had stock, watched or not, from the first check that saw the stock to the first that did not (the last 100 are kept). The details show them on a timeline of the last 24 hours, 7 days or 30 days, one lane per datacenter, and in a table. A period that is still open is drawn up to the last check, not up to now, since nothing is known after it. Recording unwatched datacenters too means that changing the selection does not lose or invent periods; their precision is that of the regular interval unless a watched datacenter has stock at the same time.
 
 ### 3.3 Scheduling
 
 - One goroutine checks domains and VPS watches one at a time, with a two-second pause between queries. Registries and OVH rate-limit per client, and watching a few domains and plans does not need parallelism.
-- Both share one queue, keyed by the domain name or `vps:<id>` (domain names cannot contain a colon). An item is due when its last check is older than the interval; new ones are due immediately. "Check now" and "Check all" put keys in a queue that goes first. The loop sleeps until the next item is due, and wakes early when domains, VPS watches or settings change.
+- Both share one queue, keyed by the domain name or `vps:<id>` (domain names cannot contain a colon). An item is due when its last check is older than the interval; new ones are due immediately. A VPS watch that is available uses the in-stock interval (a setting, 2 minutes by default, never longer than the regular interval) until a check finds it out of stock: restocks often last minutes, and the shorter interval tells how long they last. Only the watches in stock are checked this often, so the extra queries to OVH stay few. "Check now" and "Check all" put keys in a queue that goes first. The loop sleeps until the next item is due, and wakes early when domains, VPS watches or settings change.
 - Each query has a timeout (a setting, 20 seconds by default).
 
 ### 3.4 Status changes and notifications
@@ -127,14 +128,14 @@ All endpoints except `config`, `login` and `logout` require a session when a pas
 | `PATCH /api/targets/{id}` | Change `name`, `url` or `enabled` |
 | `DELETE /api/targets/{id}` | Remove a target |
 | `POST /api/targets/{id}/test` | Send a test notification; `502` with Apprise's error when it fails |
-| `PATCH /api/settings` | Change `interval` (minutes), `timeout` (seconds) or `notifyChanges` |
+| `PATCH /api/settings` | Change `interval` (minutes), `stockInterval` (minutes, for VPS in stock), `timeout` (seconds) or `notifyChanges` |
 
 ## 5. Decisions
 
 - **No database.** The state of one user fits in a small JSON file, which is easy to back up and inspect.
 - **RDAP first, WHOIS as fallback.** RDAP is structured and standard; WHOIS output differs per registry and is only parsed for availability, dates and the registrar.
 - **Sequential checks.** Simpler, and gentle on registries and OVH; a few dozen domains take about a minute per round.
-- **One schedule for domains and VPS.** Same interval, notification targets and queue; a separate interval for VPS can be added if restocks turn out to need faster checks.
+- **One schedule for domains and VPS.** Same interval, notification targets and queue; a VPS in stock is checked at a shorter interval until it sells out, rather than all VPS at a separate interval, which would query OVH often for plans that stay out of stock for weeks.
 - **OVH's public API, without credentials.** Stock and catalog are public; an OVH API key would add setup for nothing.
 - **Notify on transitions only.** An available domain is announced once, not on every check.
 - **Apprise CLI rather than a library.** Dropcatch stays a Go binary; the image adds Python and Apprise.

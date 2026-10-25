@@ -106,10 +106,12 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"apprise":         s.apprise.Path != "",
 		"ovhSubsidiaries": ovh.Subsidiaries,
 		"limits": map[string]int{
-			"minInterval": store.MinInterval,
-			"maxInterval": store.MaxInterval,
-			"minTimeout":  store.MinTimeout,
-			"maxTimeout":  store.MaxTimeout,
+			"minInterval":      store.MinInterval,
+			"maxInterval":      store.MaxInterval,
+			"minStockInterval": store.MinStockInterval,
+			"maxStockInterval": store.MaxStockInterval,
+			"minTimeout":       store.MinTimeout,
+			"maxTimeout":       store.MaxTimeout,
 		},
 		"auth": map[string]bool{
 			"required":      s.auth != nil,

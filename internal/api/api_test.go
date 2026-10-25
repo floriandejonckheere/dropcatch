@@ -194,8 +194,14 @@ func TestTargetsAndSettings(t *testing.T) {
 		settings.Interval != 15 || settings.NotifyChanges || settings.Timeout != store.DefaultSettings().Timeout {
 		t.Fatalf("settings: %d %+v", code, settings)
 	}
+	if code := ts.do("PATCH", "/api/settings", map[string]any{"stockInterval": 5}, &settings); code != http.StatusOK || settings.StockInterval != 5 {
+		t.Fatalf("stock interval: %d %+v", code, settings)
+	}
 	if code := ts.do("PATCH", "/api/settings", map[string]any{"interval": 1}, nil); code != http.StatusBadRequest {
 		t.Fatalf("too short interval: %d", code)
+	}
+	if code := ts.do("PATCH", "/api/settings", map[string]any{"stockInterval": 0}, nil); code != http.StatusBadRequest {
+		t.Fatalf("too short stock interval: %d", code)
 	}
 	if ts.store.Snapshot().Settings.Interval != 15 {
 		t.Fatal("rejected settings were saved")

@@ -36,6 +36,9 @@ const (
 // historyLimit is how many status changes are kept per domain or VPS.
 const historyLimit = 20
 
+// periodLimit is how many stock periods are kept per VPS.
+const periodLimit = 100
+
 var (
 	ErrNotFound = errors.New("not found")
 	ErrExists   = errors.New("already exists")
@@ -51,6 +54,9 @@ type State struct {
 type Settings struct {
 	// Interval between checks of each domain or VPS, in minutes.
 	Interval int `json:"interval"`
+	// StockInterval replaces Interval for a VPS while it is in stock, so
+	// that the end of the stock is seen soon after it happens, in minutes.
+	StockInterval int `json:"stockInterval"`
 	// Timeout of one registry query, in seconds.
 	Timeout int `json:"timeout"`
 	// NotifyChanges also sends notifications when a domain enters its
@@ -60,19 +66,24 @@ type Settings struct {
 }
 
 const (
-	MinInterval = 5
-	MaxInterval = 7 * 24 * 60
-	MinTimeout  = 5
-	MaxTimeout  = 120
+	MinInterval      = 5
+	MaxInterval      = 7 * 24 * 60
+	MinStockInterval = 1
+	MaxStockInterval = 60
+	MinTimeout       = 5
+	MaxTimeout       = 120
 )
 
 func DefaultSettings() Settings {
-	return Settings{Interval: 60, Timeout: 20, NotifyChanges: true}
+	return Settings{Interval: 60, StockInterval: 2, Timeout: 20, NotifyChanges: true}
 }
 
 func (s Settings) Validate() error {
 	if s.Interval < MinInterval || s.Interval > MaxInterval {
 		return fmt.Errorf("the check interval must be between %d minutes and %d days", MinInterval, MaxInterval/24/60)
+	}
+	if s.StockInterval < MinStockInterval || s.StockInterval > MaxStockInterval {
+		return fmt.Errorf("the interval while in stock must be between %d and %d minutes", MinStockInterval, MaxStockInterval)
 	}
 	if s.Timeout < MinTimeout || s.Timeout > MaxTimeout {
 		return fmt.Errorf("the timeout must be between %d and %d seconds", MinTimeout, MaxTimeout)
@@ -152,6 +163,18 @@ type VPS struct {
 	Error   string     `json:"error,omitempty"`
 
 	History []Change `json:"history,omitempty"` // newest first
+	// When each datacenter had stock, watched or not, newest first.
+	Periods []Period `json:"periods,omitempty"`
+}
+
+// Period is a time a datacenter had stock. It starts at the first check
+// that saw the stock and ends at the first that did not (End is nil while
+// it lasts), so its precision is the interval between checks.
+type Period struct {
+	Code  string     `json:"code"`
+	Name  string     `json:"name"`
+	Start time.Time  `json:"start"`
+	End   *time.Time `json:"end,omitempty"`
 }
 
 type Stock struct {
@@ -181,12 +204,38 @@ func (v *VPS) InStock() []Stock {
 // datacenters with stock change while the status stays Available.
 func (v *VPS) SetStock(stock []Stock, now time.Time) {
 	v.Stock = stock
+	v.setPeriods(now)
 	status, names := OutOfStock, []string{}
 	for _, s := range v.InStock() {
 		status = Available
 		names = append(names, s.Name)
 	}
 	setStatus(&v.Status, &v.Changed, &v.History, status, strings.Join(names, "; "), now)
+}
+
+// setPeriods ends the periods of the datacenters that lost their stock and
+// starts one for each that gained it.
+func (v *VPS) setPeriods(now time.Time) {
+	open := map[string]bool{}
+	for i := range v.Periods {
+		p := &v.Periods[i]
+		if p.End != nil {
+			continue
+		}
+		if slices.ContainsFunc(v.Stock, func(s Stock) bool { return s.Code == p.Code && s.Available }) {
+			open[p.Code] = true
+		} else {
+			p.End = &now
+		}
+	}
+	for _, s := range v.Stock {
+		if s.Available && !open[s.Code] {
+			v.Periods = append([]Period{{Code: s.Code, Name: s.Name, Start: now}}, v.Periods...)
+		}
+	}
+	if len(v.Periods) > periodLimit {
+		v.Periods = v.Periods[:periodLimit]
+	}
 }
 
 type Target struct {
@@ -317,6 +366,9 @@ func Open(dir string) (*Store, error) {
 	def := DefaultSettings()
 	if s.state.Settings.Interval == 0 {
 		s.state.Settings.Interval = def.Interval
+	}
+	if s.state.Settings.StockInterval == 0 {
+		s.state.Settings.StockInterval = def.StockInterval
 	}
 	if s.state.Settings.Timeout == 0 {
 		s.state.Settings.Timeout = def.Timeout

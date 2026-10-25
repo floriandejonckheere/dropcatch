@@ -14,6 +14,7 @@
 
   let amount = $state(1)
   let unit = $state<Unit>(60)
+  let stockInterval = $state(2)
   let timeout = $state(20)
   let notifyChanges = $state(true)
   let busy = $state(false)
@@ -24,6 +25,7 @@
     const u = s.interval % 1440 === 0 ? 1440 : s.interval % 60 === 0 ? 60 : 1
     unit = u
     amount = s.interval / u
+    stockInterval = s.stockInterval
     timeout = s.timeout
     notifyChanges = s.notifyChanges
   }
@@ -32,16 +34,20 @@
     reset()
   })
 
-  const limits = $derived(session.config?.limits ?? { minInterval: 5, maxInterval: 10080, minTimeout: 5, maxTimeout: 120 })
+  const limits = $derived(session.config?.limits ?? { minInterval: 5, maxInterval: 10080, minStockInterval: 1, maxStockInterval: 60, minTimeout: 5, maxTimeout: 120 })
   const interval = $derived(Math.round(amount * unit))
-  const dirty = $derived(interval !== app.settings.interval || timeout !== app.settings.timeout || notifyChanges !== app.settings.notifyChanges)
+  const dirty = $derived(
+    interval !== app.settings.interval ||
+      stockInterval !== app.settings.stockInterval ||
+      timeout !== app.settings.timeout || notifyChanges !== app.settings.notifyChanges,
+  )
   const checksPerDay = $derived(Math.round((1440 / interval) * app.domains.filter((d) => !d.paused).length))
 
   async function save(e: SubmitEvent) {
     e.preventDefault()
     busy = true
     try {
-      app.settings = await api.saveSettings({ interval, timeout, notifyChanges })
+      app.settings = await api.saveSettings({ interval, stockInterval, timeout, notifyChanges })
       toasts.show('Settings saved', { kind: 'success' })
     } catch (err) {
       toasts.error(err)
@@ -67,6 +73,27 @@
         Between {minutes(limits.minInterval)} and {minutes(limits.maxInterval)}.
         {#if checksPerDay > 0}That is about {checksPerDay.toLocaleString()} registry queries a day.{/if}
         Registries limit how often they answer; if checks fail with “rate limited”, check less often.
+      </p>
+    </div>
+
+    <div class="group">
+      <label class="label" for="stock-interval">Check a VPS in stock every</label>
+      <div class="row">
+        <input
+          id="stock-interval"
+          class="input amount"
+          type="number"
+          min={limits.minStockInterval}
+          max={limits.maxStockInterval}
+          step="1"
+          bind:value={stockInterval}
+          required
+        />
+        <span class="unit">minutes</span>
+      </div>
+      <p class="hint">
+        Until it sells out again, so that its stock history shows when that happened. Between {minutes(limits.minStockInterval)} and
+        {minutes(limits.maxStockInterval)}.
       </p>
     </div>
 
@@ -139,6 +166,12 @@
 
   .amount {
     width: 110px;
+  }
+
+  .unit {
+    align-self: center;
+    font-size: 14px;
+    color: var(--text-2);
   }
 
   select.input {

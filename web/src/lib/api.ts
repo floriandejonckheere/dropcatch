@@ -38,6 +38,15 @@ export interface Stock {
   available: boolean
 }
 
+/** A time a datacenter had stock, as seen by the checks. */
+export interface Period {
+  code: string
+  name: string
+  start: string
+  /** Missing while the stock lasts. */
+  end?: string
+}
+
 export interface VPS {
   id: string
   subsidiary: string
@@ -54,6 +63,8 @@ export interface VPS {
   checked?: string
   error?: string
   history?: Change[]
+  /** Newest first, for every datacenter, watched or not. */
+  periods?: Period[]
 }
 
 export interface Plan {
@@ -83,6 +94,8 @@ export interface Target {
 export interface Settings {
   /** Minutes between checks of each domain. */
   interval: number
+  /** Minutes between checks of a VPS while it is in stock. */
+  stockInterval: number
   /** Seconds before a registry query is abandoned. */
   timeout: number
   notifyChanges: boolean
@@ -100,7 +113,14 @@ export interface ServerConfig {
   version: string
   apprise: boolean
   ovhSubsidiaries: { code: string; name: string }[]
-  limits: { minInterval: number; maxInterval: number; minTimeout: number; maxTimeout: number }
+  limits: {
+    minInterval: number
+    maxInterval: number
+    minStockInterval: number
+    maxStockInterval: number
+    minTimeout: number
+    maxTimeout: number
+  }
   auth: { required: boolean; username: boolean; authenticated: boolean }
 }
 

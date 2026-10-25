@@ -32,7 +32,7 @@ gofmt -l .         # must print nothing; CI fails otherwise
 
 The frontend must be built (`cd web && npm run build`) before `go build` embeds a current UI; `go test` works without it.
 
-Run the app locally without network access: `make fakeregistry` in one terminal, then `make build && ./dropcatch --data-dir /tmp/dropcatch --rdap-bootstrap http://127.0.0.1:8053/dns.json --ovh-api http://127.0.0.1:8053/v1`. Run the fake registry with `go run ./scripts/fakeregistry --restock-after 1m` to see a VPS come back in stock. For frontend work, also run `cd web && npm run dev` (Vite proxies `/api` to port 8080).
+Run the app locally without network access: `make fakeregistry` in one terminal, then `make build && ./dropcatch --data-dir /tmp/dropcatch --rdap-bootstrap http://127.0.0.1:8053/dns.json --ovh-api http://127.0.0.1:8053/v1`. Run the fake registry with `go run ./scripts/fakeregistry --restock-after 1m` to see a VPS come back in stock, and add `--restock-for 1m` to see it sell out again (with the in-stock interval at 1 minute). `make screenshots` seeds a VPS with a week of stock history from `web/scripts/seed.mjs`. For frontend work, also run `cd web && npm run dev` (Vite proxies `/api` to port 8080).
 
 ## Rules of the codebase
 
@@ -56,5 +56,6 @@ Type checks are not enough. Run the app against the fake registry and drive the 
 ## Git
 
 - CI runs on every push to `main` and on pull requests: tests, formatting, vet, govulncheck and the frontend type check; pushes to `main` publish `ghcr.io/floriandejonckheere/dropcatch:main`.
+- When a change is done and verified, commit it and push it to `main` without asking.
 - Run `make check` and `gofmt -l .` before pushing, and check that the CI run succeeds afterwards.
 - Write commit messages that explain what changed and why, with a short subject line.

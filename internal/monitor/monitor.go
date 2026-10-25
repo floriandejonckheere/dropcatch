@@ -182,10 +182,12 @@ func (m *Monitor) next() (string, time.Duration) {
 	m.mu.Unlock()
 
 	interval := time.Duration(st.Settings.Interval) * time.Minute
+	// A VPS in stock is checked more often, to notice when it sells out.
+	stockInterval := min(interval, time.Duration(st.Settings.StockInterval)*time.Minute)
 	now := m.now()
 	var due string
 	var dueAt time.Time
-	consider := func(key string, paused bool, checked *time.Time) {
+	consider := func(key string, paused bool, checked *time.Time, interval time.Duration) {
 		if paused {
 			return
 		}
@@ -198,10 +200,14 @@ func (m *Monitor) next() (string, time.Duration) {
 		}
 	}
 	for _, d := range st.Domains {
-		consider(d.Name, d.Paused, d.Checked)
+		consider(d.Name, d.Paused, d.Checked, interval)
 	}
 	for _, v := range st.VPS {
-		consider(VPSKey(v.ID), v.Paused, v.Checked)
+		if v.Status == store.Available {
+			consider(VPSKey(v.ID), v.Paused, v.Checked, stockInterval)
+		} else {
+			consider(VPSKey(v.ID), v.Paused, v.Checked, interval)
+		}
 	}
 	switch {
 	case due == "":

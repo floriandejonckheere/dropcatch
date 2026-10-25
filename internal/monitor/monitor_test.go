@@ -286,6 +286,29 @@ func TestVPS(t *testing.T) {
 		t.Fatalf("sent %+v", got)
 	}
 
+	// A watch in stock is due after the stock interval, the others after
+	// the regular one.
+	now := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+	m.now = func() time.Time { return now }
+	checked := now.Add(-3 * time.Minute)
+	_ = st.Update(func(s *store.State) error {
+		s.Settings.Interval, s.Settings.StockInterval = 60, 5
+		for i := range s.VPS {
+			s.VPS[i].Checked = &checked
+		}
+		return nil
+	})
+	if key, wait := m.next(); key != "" || wait != 2*time.Minute {
+		t.Fatalf("next = %q, %v; want the watch in stock in 2 minutes", key, wait)
+	}
+	now = now.Add(2 * time.Minute)
+	if key, _ := m.next(); key != VPSKey(gra.ID) {
+		t.Fatalf("next = %q, want the watch in stock", key)
+	}
+	if v := st.Snapshot().VPSWatch(gra.ID); len(v.Periods) != 3 || v.Periods[0].End != nil || v.Periods[1].End == nil {
+		t.Fatalf("periods = %+v", v.Periods)
+	}
+
 	// VPS watches are scheduled with the domains, and requested checks of
 	// removed watches are skipped.
 	_ = st.Update(func(s *store.State) error { return s.RemoveVPS(any.ID) })

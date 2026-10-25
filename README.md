@@ -10,8 +10,8 @@ It runs as a single container with a small web UI, for one user behind a passwor
 
 - **Watch domains**: add several at once (`example.com example.net`), with an optional note; pause, resume or remove them. Internationalised names (`bücher.de`) and pasted URLs work; subdomains are reduced to the registered domain.
 - **Registration status**: registered, dropping (expired, in the redemption or pending delete period) or available, with the registrar, registration and expiry dates, the registry's status codes and a history of status changes
-- **Watch OVHcloud VPS**: choose the OVH shop (country), a plan from OVH's catalog (with its specifications and price) and any datacenter, whole regions (Europe, North America, Asia-Pacific) or individual datacenters. See the current stock of every datacenter, with a link to order.
-- **Periodic checks** at an interval you choose (5 minutes to 7 days), one query at a time so that registries and OVH do not rate-limit you; check one or everything on demand
+- **Watch OVHcloud VPS**: choose the OVH shop (country), a plan from OVH's catalog (with its specifications and price) and any datacenter, whole regions (Europe, North America, Asia-Pacific) or individual datacenters. See the current stock of every datacenter, with a link to order, and when each datacenter had stock, on a timeline and in a table.
+- **Periodic checks** at an interval you choose (5 minutes to 7 days), and more often (every 2 minutes by default) while a VPS is in stock, one query at a time so that registries and OVH do not rate-limit you; check one or everything on demand
 - **Notifications** through any [Apprise URL](https://github.com/caronc/apprise/wiki#notification-services): ntfy, Telegram, Discord, Slack, Pushover, Gotify, e-mail and many more. Send a test from the UI. Optionally also notified when a domain enters its deletion period, is restored by its owner or is registered again, and when a VPS sells out again.
 - **Live updates**: check results appear without reloading
 - **Install** on a phone's home screen or as a desktop app
@@ -23,7 +23,7 @@ It runs as a single container with a small web UI, for one user behind a passwor
 |---|---|
 | ![VPS watches with their stock](docs/screenshots/vps.jpg) | ![Choosing a plan and datacenters](docs/screenshots/vps-form.jpg) |
 | **Domain details** | **VPS stock** |
-| ![Details of a domain in its deletion period](docs/screenshots/details.jpg) | ![Stock of a VPS plan per datacenter](docs/screenshots/vps-details.jpg) |
+| ![Details of a domain in its deletion period](docs/screenshots/details.jpg) | ![Stock of a VPS plan per datacenter and its stock history](docs/screenshots/vps-details.jpg) |
 | **Notification targets** | **Settings** |
 | ![Notification targets](docs/screenshots/notifications.jpg) | ![Settings](docs/screenshots/settings.jpg) |
 | **Light theme** | |
@@ -56,9 +56,11 @@ Dropcatch reads OVH's public API, which needs no OVH account: the stock of a pla
 
 A plan counts as in stock in a datacenter when both the plan and its Linux images are available there. A watch is **available** when at least one datacenter it watches has stock. Every time stock appears in a watched datacenter that had none, every enabled notification target is notified with the datacenters and a link to order.
 
+While a watch is available, it is checked more often (every 2 minutes by default, set in the settings) until it sells out again, so that its stock history shows how long the stock lasted. The history records, for every datacenter that offers the plan, when it had stock: from the first check that saw the stock to the first that did not. The last 100 periods are kept.
+
 ### Checks
 
-Domains and VPS share one schedule and one interval. Checks run one at a time, with a two-second pause in between. A failed check (timeout, rate limit) keeps the last known status and is shown on the domain or VPS; it does not send a notification.
+Domains and VPS share one schedule and one interval, except that a VPS in stock is checked at the shorter in-stock interval. Checks run one at a time, with a two-second pause in between. A failed check (timeout, rate limit) keeps the last known status and is shown on the domain or VPS; it does not send a notification.
 
 ## Quick start (Docker)
 
@@ -124,7 +126,7 @@ For frontend development, also run `cd web && npm run dev`. Vite proxies `/api` 
 | `make fakeregistry` | Runs a fake RDAP registry and OVH API on port 8053 for local testing |
 | `make screenshots` | Regenerates `docs/screenshots` |
 
-The fake registry answers for common TLDs: names starting with `free` are available, names starting with `drop` are pending deletion, and all others are registered. It also offers four VPS plans: VPS-1 is out of stock everywhere (until `--restock-after`, if given, then in Roubaix), and the others have stock in some datacenters. Point Dropcatch at it with `--rdap-bootstrap http://127.0.0.1:8053/dns.json --ovh-api http://127.0.0.1:8053/v1`. `make screenshots` needs Playwright's Chromium (`cd web && npx playwright install chromium`, or set `CHROMIUM_PATH`). Regenerate the screenshots whenever the UI changes.
+The fake registry answers for common TLDs: names starting with `free` are available, names starting with `drop` are pending deletion, and all others are registered. It also offers four VPS plans: VPS-1 is out of stock everywhere (until `--restock-after`, if given, then in Roubaix; with `--restock-for`, it sells out again after that long, and restocks again and again), and the others have stock in some datacenters. Point Dropcatch at it with `--rdap-bootstrap http://127.0.0.1:8053/dns.json --ovh-api http://127.0.0.1:8053/v1`. `make screenshots` needs Playwright's Chromium (`cd web && npx playwright install chromium`, or set `CHROMIUM_PATH`). Regenerate the screenshots whenever the UI changes.
 
 Instructions for coding agents are in [AGENTS.md](AGENTS.md).
 

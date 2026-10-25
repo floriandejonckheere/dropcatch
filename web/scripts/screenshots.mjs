@@ -24,7 +24,7 @@ async function api(method, endpoint, body) {
 // available and those starting with "drop" as pending deletion; of its VPS
 // plans, VPS-1 is out of stock and the others are in stock somewhere.
 // Watches whose stock is shown in screenshots have the datacenters' names
-// once checked.
+// once checked. VPS-3 comes from scripts/seed.mjs, with its stock history.
 await api('POST', 'domains', { names: 'free-coffee.shop dropshipping.dev example.com pixelforge.io bücher.de northwind.co.uk' })
 await api('POST', 'domains', { names: 'free-lunch.app', note: 'For the side project' })
 await api('POST', 'domains', { names: 'acme.net', note: 'Ask the owner first' })
@@ -32,7 +32,6 @@ await api('PATCH', 'domains/acme.net', { paused: true })
 const eu = ['eu-central-waw', 'eu-south-mil', 'eu-west-gra', 'eu-west-lim', 'eu-west-rbx', 'eu-west-sbg']
 await api('POST', 'vps', { subsidiary: 'FR', plan: 'vps-2025-model1', planName: 'VPS-1', datacenters: eu, note: 'Cheapest one' })
 await api('POST', 'vps', { subsidiary: 'FR', plan: 'vps-2025-model2', planName: 'VPS-2', datacenters: ['ca-east-bhs'] })
-await api('POST', 'vps', { subsidiary: 'FR', plan: 'vps-2025-model3', planName: 'VPS-3', datacenters: [] })
 await api('POST', 'vps', { subsidiary: 'FR', plan: 'vps-2025-model4', planName: 'VPS-4', datacenters: ['eu-west-gra', 'eu-west-rbx'] })
 await api('POST', 'targets', { name: 'Phone (ntfy)', url: 'ntfy://dropcatch-alerts', enabled: true })
 await api('POST', 'targets', { name: 'Telegram', url: 'tgram://123456789:AAF-token/987654', enabled: true })

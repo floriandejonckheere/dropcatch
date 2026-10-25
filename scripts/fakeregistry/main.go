@@ -9,7 +9,8 @@
 // on the name.
 //
 // OVH: it offers four VPS plans for every subsidiary. VPS-1 is out of
-// stock everywhere (until --restock-after, then in Roubaix), and the others
+// stock everywhere (until --restock-after, then in Roubaix for
+// --restock-for, again and again), and the others
 // have stock in some datacenters.
 package main
 
@@ -26,6 +27,7 @@ import (
 func main() {
 	listen := flag.String("listen", "127.0.0.1:8053", "address to listen on")
 	restock := flag.Duration("restock-after", 0, "put VPS-1 in stock in Roubaix this long after starting (0 = never)")
+	restockFor := flag.Duration("restock-for", 0, "sell VPS-1 out again after this long in stock, and restock it after --restock-after (0 = never sell out)")
 	tlds := flag.String("tlds", "com,net,org,io,dev,app,shop,be,nl,de,co.uk", "comma-separated TLDs to serve")
 	flag.Parse()
 	started := time.Now()
@@ -82,7 +84,7 @@ func main() {
 				break
 			}
 			status := "out-of-stock"
-			if stock[code] || (plan == vpsPlans[0].code && code == "eu-west-rbx" && *restock > 0 && time.Since(started) > *restock) {
+			if stock[code] || (plan == vpsPlans[0].code && code == "eu-west-rbx" && restocked(time.Since(started), *restock, *restockFor)) {
 				status = "available"
 			}
 			dcs = append(dcs, fmt.Sprintf(`{"datacenter":%q,"code":%q,"status":%q,"linuxStatus":%[3]q}`,
@@ -92,6 +94,19 @@ func main() {
 	})
 	log.Printf("fake registry on http://%s/dns.json", *listen)
 	log.Fatal(http.ListenAndServe(*listen, nil))
+}
+
+// restocked reports whether VPS-1 is in stock after running for d: from
+// after on, and with restockFor set, alternately out of stock for after and
+// in stock for restockFor.
+func restocked(d, after, restockFor time.Duration) bool {
+	switch {
+	case after <= 0 || d < after:
+		return false
+	case restockFor <= 0:
+		return true
+	}
+	return (d-after)%(after+restockFor) < restockFor
 }
 
 var vpsPlans = []struct {

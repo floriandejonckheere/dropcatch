@@ -56,6 +56,15 @@ export function minutes(n: number): string {
   return n === 1 ? '1 minute' : `${n} minutes`
 }
 
+/** "4 min", "2 h 15 min", "3 d 4 h", from milliseconds. */
+export function duration(ms: number): string {
+  const m = Math.max(1, Math.round(ms / 60000))
+  if (m < 60) return `${m} min`
+  const h = Math.floor(m / 60)
+  if (h < 24) return m % 60 ? `${h} h ${m % 60} min` : `${h} h`
+  return h % 24 ? `${Math.floor(h / 24)} d ${h % 24} h` : `${h / 24} d`
+}
+
 /** Hides the credentials in an Apprise URL: "tgram://123…/…". */
 export function maskUrl(u: string): string {
   const i = u.indexOf('://')
