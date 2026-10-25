@@ -12,6 +12,7 @@ internal/store        state (settings, domains, VPS watches, targets) in dropcat
 internal/lookup       RDAP and WHOIS clients, domain name normalisation
 internal/ovh          OVH VPS stock and plan catalog
 internal/notify       Apprise CLI wrapper
+internal/webpush      Web Push (RFC 8291 encryption, VAPID) for push targets
 internal/monitor      scheduler, status changes, notifications
 internal/api          HTTP handlers and server-sent events
 web/                  Svelte app (src/), built into web/dist and embedded
@@ -38,6 +39,7 @@ Run the app locally without network access: `make fakeregistry` in one terminal,
 
 - **Never send a notification on a failed check.** A lookup error keeps the last known status; only status changes notify (see the table in `docs/DESIGN.md`).
 - **Be gentle on registries and OVH.** Domain and VPS checks go through the monitor's single queue, one at a time with a pause in between; do not add parallel or retrying queries. The form's plan and stock lookups (`/api/ovh/*`) are the only OVH requests outside it, made on user action.
+- **Push:** the service worker (`web/public/sw.js`) is plain JavaScript served as is; it must never cache `/api/`. Push works only in a secure context: test it on `localhost` with Playwright's `channel: 'chromium'` (new headless mode), which gets real subscriptions; the old headless mode reports notifications as denied.
 - **Never put Apprise URLs on a command line or in logs.** They contain credentials; `notify` passes them in a private temporary file.
 - **State changes go through `store.Update`**, which saves before it swaps in the new state. Return `badRequest{err}` from an update function for validation errors.
 - **Mutating endpoints** must be POST/PATCH/DELETE (the same-origin check relies on that).

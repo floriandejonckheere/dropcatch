@@ -3,6 +3,9 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/ecdh"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -18,6 +21,7 @@ import (
 	"github.com/floriandejonckheere/dropcatch/internal/notify"
 	"github.com/floriandejonckheere/dropcatch/internal/ovh"
 	"github.com/floriandejonckheere/dropcatch/internal/store"
+	"github.com/floriandejonckheere/dropcatch/internal/webpush"
 )
 
 type noLookup struct{}
@@ -39,6 +43,16 @@ func (fakeOVH) Stock(_ context.Context, sub, plan string) ([]ovh.Datacenter, err
 	return []ovh.Datacenter{{Code: "eu-west-gra", Name: "Gravelines, France", Region: ovh.Europe, Available: true}}, nil
 }
 
+type fakePush struct{ sent []webpush.Subscription }
+
+func (f *fakePush) Send(_ context.Context, sub webpush.Subscription, _ []byte, _ time.Duration, _ string) error {
+	f.sent = append(f.sent, sub)
+	if strings.Contains(sub.Endpoint, "gone") {
+		return webpush.ErrGone
+	}
+	return nil
+}
+
 type testServer struct {
 	t      *testing.T
 	h      http.Handler
@@ -56,7 +70,8 @@ func newServer(t *testing.T, password string) *testServer {
 	o := &fakeOVH{}
 	m := monitor.New(st, noLookup{}, o, apprise)
 	ui := fstest.MapFS{"index.html": {Data: []byte("<html>dropcatch</html>")}}
-	s, err := New(cfg, st, m, o, apprise, ui)
+	m.Push = &fakePush{}
+	s, err := New(cfg, st, m, o, apprise, "BPublicKey", ui)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,6 +220,56 @@ func TestTargetsAndSettings(t *testing.T) {
 	}
 	if ts.store.Snapshot().Settings.Interval != 15 {
 		t.Fatal("rejected settings were saved")
+	}
+}
+
+func TestPushTargets(t *testing.T) {
+	ts := newServer(t, "")
+	key, _ := ecdh.P256().GenerateKey(rand.Reader)
+	sub := func(endpoint string) map[string]string {
+		return map[string]string{"endpoint": endpoint, "p256dh": base64.RawURLEncoding.EncodeToString(key.PublicKey().Bytes()), "auth": "BTBZMqHH6r4Tts7J_aSIgg"}
+	}
+	var cfg struct{ PushKey string }
+	if ts.do("GET", "/api/config", nil, &cfg); cfg.PushKey != "BPublicKey" {
+		t.Fatalf("config push key %q", cfg.PushKey)
+	}
+
+	var tg store.Target
+	if code := ts.do("POST", "/api/targets", map[string]any{"name": "Phone", "type": "push", "push": sub("https://push.example/a")}, &tg); code != http.StatusOK ||
+		tg.Type != store.Push || !tg.Enabled || tg.Push == nil {
+		t.Fatalf("add push target: %d %+v", code, tg)
+	}
+	// Subscribing again from the same browser replaces its target.
+	var again store.Target
+	if code := ts.do("POST", "/api/targets", map[string]any{"name": "My phone", "type": "push", "push": sub("https://push.example/a")}, &again); code != http.StatusOK ||
+		again.ID != tg.ID || again.Name != "My phone" || len(ts.store.Snapshot().Targets) != 1 {
+		t.Fatalf("subscribe again: %d %+v", code, again)
+	}
+	for _, bad := range []map[string]any{
+		{"name": "x", "type": "push", "push": sub("http://push.example/a")},
+		{"name": "x", "type": "push"},
+		{"name": "", "type": "push", "push": sub("https://push.example/b")},
+		{"name": "x", "type": "pigeon", "url": "ntfy://x"},
+	} {
+		if code := ts.do("POST", "/api/targets", bad, nil); code != http.StatusBadRequest {
+			t.Errorf("add %v: %d", bad, code)
+		}
+	}
+	if code := ts.do("PATCH", "/api/targets/"+tg.ID, map[string]any{"url": "ntfy://x"}, nil); code != http.StatusBadRequest {
+		t.Fatalf("set URL of push target: %d", code)
+	}
+	if code := ts.do("POST", "/api/targets/"+tg.ID+"/test", nil, nil); code != http.StatusOK {
+		t.Fatalf("test push target: %d", code)
+	}
+
+	// A subscription the push service no longer knows disables its target.
+	ts.do("POST", "/api/targets", map[string]any{"name": "Old", "type": "push", "push": sub("https://push.example/gone")}, &tg)
+	var res struct{ Error string }
+	if code := ts.do("POST", "/api/targets/"+tg.ID+"/test", nil, &res); code != http.StatusBadGateway || !strings.Contains(res.Error, "unsubscribed") {
+		t.Fatalf("test gone target: %d %+v", code, res)
+	}
+	if ts.store.Snapshot().Target(tg.ID).Enabled {
+		t.Fatal("gone target still enabled")
 	}
 }
 

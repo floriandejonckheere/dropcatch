@@ -238,14 +238,40 @@ func (v *VPS) setPeriods(now time.Time) {
 	}
 }
 
+// Target types.
+const (
+	Apprise = "apprise"
+	Push    = "push" // Web Push to a browser or installed app
+)
+
 type Target struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	URL     string `json:"url"` // Apprise URL
-	Enabled bool   `json:"enabled"`
+	ID      string        `json:"id"`
+	Name    string        `json:"name"`
+	Type    string        `json:"type"`
+	URL     string        `json:"url"`            // Apprise URL
+	Push    *Subscription `json:"push,omitempty"` // Web Push subscription
+	Enabled bool          `json:"enabled"`
 
 	LastSent  *time.Time `json:"lastSent,omitempty"`
 	LastError string     `json:"lastError,omitempty"`
+}
+
+// Subscription is a browser's Web Push subscription; the keys are
+// base64url-encoded.
+type Subscription struct {
+	Endpoint string `json:"endpoint"`
+	P256dh   string `json:"p256dh"`
+	Auth     string `json:"auth"`
+}
+
+// PushTarget returns the target with the push endpoint, or nil.
+func (s State) PushTarget(endpoint string) *Target {
+	for i := range s.Targets {
+		if t := &s.Targets[i]; t.Push != nil && t.Push.Endpoint == endpoint {
+			return t
+		}
+	}
+	return nil
 }
 
 // Domain returns the named domain; the pointer refers into s.Domains.
@@ -327,6 +353,9 @@ func newID() string {
 // AddTarget adds a target with a new ID.
 func (s *State) AddTarget(t Target) *Target {
 	t.ID = newID()
+	if t.Type == "" {
+		t.Type = Apprise
+	}
 	s.Targets = append(s.Targets, t)
 	return &s.Targets[len(s.Targets)-1]
 }
@@ -369,6 +398,12 @@ func Open(dir string) (*Store, error) {
 	}
 	if s.state.Settings.StockInterval == 0 {
 		s.state.Settings.StockInterval = def.StockInterval
+	}
+	// Targets were all Apprise URLs before push was added.
+	for i := range s.state.Targets {
+		if s.state.Targets[i].Type == "" {
+			s.state.Targets[i].Type = Apprise
+		}
 	}
 	if s.state.Settings.Timeout == 0 {
 		s.state.Settings.Timeout = def.Timeout

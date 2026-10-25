@@ -14,7 +14,7 @@ It follows the structure of [Wavr](https://github.com/floriandejonckheere/wavr):
 | Registry queries | **RDAP** (RFC 9082/9083) with the IANA bootstrap file (RFC 9224), **WHOIS** (RFC 3912) as a fallback | RDAP is structured JSON and mandatory for gTLDs; WHOIS covers the ccTLDs without RDAP |
 | Domain names | `golang.org/x/net/idna` and `publicsuffix` | IDN to punycode; reduce subdomains to the registered domain |
 | VPS stock | OVH's **public API** (`/vps/order/rule/datacenter`, `/order/catalog/public/vps`) | Needs no OVH account or API keys |
-| Notifications | **Apprise CLI** | One URL format for over a hundred services; installed with pip in the image |
+| Notifications | **Apprise CLI** and **Web Push** | Apprise: one URL format for over a hundred services, installed with pip in the image. Web Push: notifications on the user's phone without any other service |
 | Storage | One **JSON file** in the data directory | A single user has a few dozen domains: no database needed |
 | Frontend | **Svelte 5 + Vite**, TypeScript | Same as Wavr; small bundle |
 | Live updates | **Server-Sent Events** | Check results arrive in the UI as they happen |
@@ -95,11 +95,19 @@ Notifications go to each enabled target separately, so one failing service does 
 - Adding or changing a target validates the URL with `apprise --dry-run`, which fails for URLs Apprise cannot parse.
 - Without Apprise installed, targets can still be managed; sending reports the missing command and the UI shows a warning.
 
-### 3.6 State
+### 3.6 Web Push and the installed app
 
-`dropcatch.json` holds the settings, domains, VPS watches and targets. The store keeps the state in memory; `Update` applies a change to a copy, writes it to a temporary file, renames it over the old one, and only then swaps it in, so a failed write leaves both the file and the memory unchanged. The file is created with mode 0600.
+- Push targets are browsers that subscribed from the Notifications page. `internal/webpush` encrypts each message for the subscription (RFC 8291, `aes128gcm`) and signs a VAPID token (RFC 8292) with a P-256 key created in the data directory (`vapid.key`, mode 0600), using only the standard library. The public key is in `/api/config`, which the browser needs to subscribe.
+- The payload is JSON: title, body, kind, the view to open (`domains`, `vps`) and a tag (the domain or `vps:<id>`), so that a newer message about the same thing replaces the older one on the device. Availability is sent with `Urgency: high`, the rest as normal; the push service keeps messages for a day while the device is offline.
+- A browser that subscribes again (notifications turned off and on, a renewed subscription) replaces its target, matched on the endpoint. When the push service answers `404` or `410`, the subscription is gone for good: the target is disabled with an explanation instead of failing on every notification.
+- The service worker (`web/public/sw.js`, served unbundled) shows the notifications and opens the right view when one is tapped. It caches the page and its content-hashed assets, network first for the page, so that the installed app opens when the server is down; the page then retries every 10 seconds. The API is never cached.
+- Server availability: while the app is open, a lost event stream shows a banner, and the page polls `/api/config` until the server answers, then reconnects (EventSource gives up by itself when a proxy answers with an error). When the app is closed, the only way a browser runs code periodically is periodic background sync, which only Chrome offers, for installed apps, at an interval it picks; the worker uses it to notify when the server stops or starts answering. A reliable outage alert would need a monitor outside Dropcatch.
 
-### 3.7 Authentication and HTTP security
+### 3.7 State
+
+`dropcatch.json` holds the settings, domains, VPS watches and targets (Apprise URLs and push subscriptions). The store keeps the state in memory; `Update` applies a change to a copy, writes it to a temporary file, renames it over the old one, and only then swaps it in, so a failed write leaves both the file and the memory unchanged. The file is created with mode 0600.
+
+### 3.8 Authentication and HTTP security
 
 Taken from Wavr unchanged: a single password (plain or bcrypt) with an optional username; HMAC-signed session cookies (30 days) keyed on a secret stored in the data directory and on the credentials, so changing the password logs out every session; logged-out sessions are remembered until they expire; ten failed logins per client in 15 minutes lock it out for the rest of the window. Modifying requests must be POST, PATCH or DELETE and are refused when their `Origin` is another host. A strict Content Security Policy allows only Dropcatch's own scripts.
 
@@ -109,7 +117,7 @@ All endpoints except `config`, `login` and `logout` require a session when a pas
 
 | Method and path | Purpose |
 |---|---|
-| `GET /api/config` | Version, whether Apprise is installed, setting limits, login state |
+| `GET /api/config` | Version, whether Apprise is installed, the VAPID public key for push, setting limits, login state |
 | `POST /api/login`, `POST /api/logout` | Session cookie |
 | `GET /api/state` | Domains, VPS watches, targets, settings and the keys being checked |
 | `GET /api/events` | SSE: `domain`, `domains`, `removed`, `vps`, `vpsRemoved`, `targets`, `settings`, `checking` |
@@ -124,8 +132,8 @@ All endpoints except `config`, `login` and `logout` require a session when a pas
 | `PATCH /api/vps/{id}` | Change `datacenters`, `note` or `paused` |
 | `DELETE /api/vps/{id}` | Stop watching |
 | `POST /api/vps/{id}/check` | Check now (queued; the result arrives as an event) |
-| `POST /api/targets` | Add a target: `{name, url, enabled}` |
-| `PATCH /api/targets/{id}` | Change `name`, `url` or `enabled` |
+| `POST /api/targets` | Add a target: `{name, url, enabled}`, or `{name, type: "push", push: {endpoint, p256dh, auth}}` for this browser (replaces its earlier target) |
+| `PATCH /api/targets/{id}` | Change `name`, `url` (not for push targets) or `enabled` |
 | `DELETE /api/targets/{id}` | Remove a target |
 | `POST /api/targets/{id}/test` | Send a test notification; `502` with Apprise's error when it fails |
 | `PATCH /api/settings` | Change `interval` (minutes), `stockInterval` (minutes, for VPS in stock), `timeout` (seconds) or `notifyChanges` |
@@ -139,6 +147,7 @@ All endpoints except `config`, `login` and `logout` require a session when a pas
 - **OVH's public API, without credentials.** Stock and catalog are public; an OVH API key would add setup for nothing.
 - **Notify on transitions only.** An available domain is announced once, not on every check.
 - **Apprise CLI rather than a library.** Dropcatch stays a Go binary; the image adds Python and Apprise.
+- **Web Push implemented in the standard library.** The encryption and VAPID signature are about two hundred lines over `crypto/ecdh`, `crypto/hkdf` and `crypto/ecdsa`, tested against the example in RFC 8291; a dependency would add more code than it saves. Push is a target type rather than an Apprise URL, because the subscription is created by the browser and has to be renewed from it.
 - **Hash routes** (`#/notifications`) so that reloading works under any base path.
 
 ## 6. Open items

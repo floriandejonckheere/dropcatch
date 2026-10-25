@@ -95,6 +95,7 @@ func vpsMessage(before, after store.VPS, changes bool) *Message {
 			Title: name + " is available",
 			Body:  "OVHcloud " + name + " (" + after.Plan + ") can be ordered in " + strings.Join(added, "; ") + ": " + ovh.OrderURL(after.Subsidiary, after.Plan),
 			Kind:  notify.Success,
+			View:  "vps", Tag: "vps:" + after.ID,
 		}
 	}
 	if changes && before.Status == store.Available && after.Status == store.OutOfStock {
@@ -102,6 +103,7 @@ func vpsMessage(before, after store.VPS, changes bool) *Message {
 			Title: name + " is out of stock",
 			Body:  "OVHcloud " + name + " (" + after.Plan + ") sold out again in the datacenters you watch.",
 			Kind:  notify.Warning,
+			View:  "vps", Tag: "vps:" + after.ID,
 		}
 	}
 	return nil

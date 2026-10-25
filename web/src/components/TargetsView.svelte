@@ -2,6 +2,7 @@
   import { api, type Target } from '../lib/api'
   import { dialogs } from '../lib/dialogs.svelte'
   import { maskUrl, relative } from '../lib/format'
+  import { deviceName, push } from '../lib/push.svelte'
   import { session } from '../lib/session.svelte'
   import { app } from '../lib/state.svelte'
   import { toasts } from '../lib/toasts.svelte'
@@ -14,6 +15,31 @@
   // The target being edited; an empty object adds one.
   let editing = $state<Partial<Target> | null>(null)
   let testing = $state<string | null>(null)
+  let subscribing = $state(false)
+
+  const thisDevice = (t: Target) => !!push.endpoint && t.push?.endpoint === push.endpoint
+  const subscribed = $derived(app.targets.some((t) => thisDevice(t) && t.enabled))
+  const host = (t: Target) => {
+    try {
+      return new URL(t.push!.endpoint).host
+    } catch {
+      return ''
+    }
+  }
+
+  async function subscribe() {
+    subscribing = true
+    try {
+      const existing = app.targets.find(thisDevice)
+      const t = await push.subscribe(existing?.name ?? deviceName())
+      app.upsertTarget(t)
+      toasts.show(`${t.name} gets push notifications now`, { kind: 'success' })
+    } catch (e) {
+      toasts.error(e)
+    } finally {
+      subscribing = false
+    }
+  }
 
   async function test(t: Target) {
     testing = t.id
@@ -40,6 +66,7 @@
     try {
       await api.removeTarget(t.id)
       app.targets = app.targets.filter((x) => x.id !== t.id)
+      await push.forget(t).catch(() => {})
     } catch (e) {
       toasts.error(e)
     }
@@ -59,7 +86,7 @@
   <header>
     <div>
       <h1>Notifications</h1>
-      <p class="muted">When a domain becomes available, every enabled target is notified.</p>
+      <p class="muted">When a domain or VPS becomes available, every enabled target is notified.</p>
     </div>
     <button class="pill primary" onclick={() => (editing = {})}><Icon name="plus" size={16} />Add target</button>
   </header>
@@ -67,8 +94,21 @@
   {#if session.config && !session.config.apprise}
     <p class="warning" role="alert">
       <Icon name="alert" size={16} />
-      <span>The <code>apprise</code> command is not installed, so notifications cannot be sent. The Docker image includes it.</span>
+      <span>The <code>apprise</code> command is not installed, so notifications cannot be sent to Apprise URLs. The Docker image includes it.</span>
     </p>
+  {/if}
+
+  {#if !subscribed && session.config?.pushKey}
+    <div class="device card">
+      <Icon name="bell" size={20} />
+      <div>
+        <strong>Push notifications on this device</strong>
+        <p>{push.unsupported || 'Get a notification on this phone or computer when something becomes available, even when Dropcatch is closed.'}</p>
+      </div>
+      {#if !push.unsupported}
+        <button class="pill primary" onclick={subscribe} disabled={subscribing}>{subscribing ? 'Enabling…' : 'Enable'}</button>
+      {/if}
+    </div>
   {/if}
 
   {#if app.targets.length}
@@ -80,8 +120,12 @@
             <span class="track"></span>
           </label>
           <button class="info" onclick={() => (editing = t)}>
-            <span class="name ellipsis">{t.name}</span>
-            <span class="url ellipsis">{maskUrl(t.url)}</span>
+            <span class="name ellipsis">{t.name}{#if thisDevice(t)}<span class="tag">This device</span>{/if}</span>
+            {#if t.type === 'push'}
+              <span class="url ellipsis">Push · {host(t)}</span>
+            {:else}
+              <span class="url ellipsis">{maskUrl(t.url)}</span>
+            {/if}
           </button>
           <div class="last">
             {#if t.lastError}
@@ -106,8 +150,8 @@
       <Icon name="bell" size={36} />
       <h2>No notification targets</h2>
       <p>
-        Add an <a href="https://github.com/caronc/apprise/wiki" target="_blank" rel="noreferrer">Apprise URL</a> for each place you want to be told:
-        ntfy, Telegram, Discord, Slack, e-mail, Pushover, Gotify and over a hundred more.
+        Enable push notifications on your phone, or add an <a href="https://github.com/caronc/apprise/wiki" target="_blank" rel="noreferrer">Apprise URL</a> for
+        each place you want to be told: ntfy, Telegram, Discord, Slack, e-mail, Pushover, Gotify and over a hundred more.
       </p>
     </div>
   {/if}
@@ -162,6 +206,49 @@
   .warning :global(svg) {
     flex: none;
     margin-top: 2px;
+  }
+
+  .device {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 16px;
+  }
+
+  .device > :global(svg) {
+    flex: none;
+    color: var(--accent-text);
+  }
+
+  .device div {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .device strong {
+    font-size: 14px;
+  }
+
+  .device p {
+    margin: 2px 0 0;
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--text-2);
+  }
+
+  .device .pill {
+    flex: none;
+  }
+
+  .tag {
+    margin-left: 8px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: var(--bg-elev-2);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-2);
+    vertical-align: 1px;
   }
 
   .list {

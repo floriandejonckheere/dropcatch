@@ -82,10 +82,19 @@ export interface Catalog {
   plans: Plan[]
 }
 
+export interface Subscription {
+  endpoint: string
+  p256dh: string
+  auth: string
+}
+
 export interface Target {
   id: string
   name: string
+  /** An Apprise URL, or Web Push to a browser or installed app. */
+  type: 'apprise' | 'push'
   url: string
+  push?: Subscription
   enabled: boolean
   lastSent?: string
   lastError?: string
@@ -112,6 +121,8 @@ export interface State {
 export interface ServerConfig {
   version: string
   apprise: boolean
+  /** VAPID public key for push subscriptions; empty when push is unavailable. */
+  pushKey: string
   ovhSubsidiaries: { code: string; name: string }[]
   limits: {
     minInterval: number
@@ -186,7 +197,8 @@ export const api = {
   removeVPS: (id: string) => request<{ ok: boolean }>('DELETE', `vps/${enc(id)}`),
   checkVPS: (id: string) => request<{ ok: boolean }>('POST', `vps/${enc(id)}/check`),
 
-  addTarget: (t: Omit<Target, 'id'>) => request<Target>('POST', 'targets', { name: t.name, url: t.url, enabled: t.enabled }),
+  addTarget: (t: { name: string; enabled: boolean } & ({ type?: 'apprise'; url: string } | { type: 'push'; push: Subscription })) =>
+    request<Target>('POST', 'targets', t),
   editTarget: (id: string, patch: Partial<Pick<Target, 'name' | 'url' | 'enabled'>>) => request<Target>('PATCH', `targets/${enc(id)}`, patch),
   removeTarget: (id: string) => request<{ ok: boolean }>('DELETE', `targets/${enc(id)}`),
   testTarget: (id: string) => request<{ ok: boolean }>('POST', `targets/${enc(id)}/test`),

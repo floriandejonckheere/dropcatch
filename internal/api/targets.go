@@ -10,6 +10,7 @@ import (
 	"github.com/floriandejonckheere/dropcatch/internal/monitor"
 	"github.com/floriandejonckheere/dropcatch/internal/notify"
 	"github.com/floriandejonckheere/dropcatch/internal/store"
+	"github.com/floriandejonckheere/dropcatch/internal/webpush"
 )
 
 const maxName = 100
@@ -29,21 +30,67 @@ func (s *Server) validateTarget(ctx context.Context, name, url string) error {
 
 func (s *Server) handleTargetAdd(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name    string `json:"name"`
-		URL     string `json:"url"`
-		Enabled bool   `json:"enabled"`
+		Name    string              `json:"name"`
+		Type    string              `json:"type"`
+		URL     string              `json:"url"`
+		Push    *store.Subscription `json:"push"`
+		Enabled bool                `json:"enabled"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
 	req.Name, req.URL = strings.TrimSpace(req.Name), strings.TrimSpace(req.URL)
+	if req.Type == store.Push {
+		s.addPushTarget(w, req.Name, req.Push)
+		return
+	}
+	if req.Type != "" && req.Type != store.Apprise {
+		writeError(w, http.StatusBadRequest, "unknown target type")
+		return
+	}
 	if err := s.validateTarget(r.Context(), req.Name, req.URL); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	var t store.Target
 	if !s.update(w, func(st *store.State) error {
-		t = *st.AddTarget(store.Target{Name: req.Name, URL: req.URL, Enabled: req.Enabled})
+		t = *st.AddTarget(store.Target{Name: req.Name, Type: store.Apprise, URL: req.URL, Enabled: req.Enabled})
+		return nil
+	}) {
+		return
+	}
+	s.publishTargets()
+	writeJSON(w, t)
+}
+
+// addPushTarget adds the browser that sent the subscription. A browser
+// that subscribes again (after turning notifications off and on, or when
+// its subscription was renewed) replaces its target instead of adding one.
+func (s *Server) addPushTarget(w http.ResponseWriter, name string, sub *store.Subscription) {
+	switch {
+	case s.pushKey == "":
+		writeError(w, http.StatusBadRequest, "push notifications are not available")
+		return
+	case sub == nil:
+		writeError(w, http.StatusBadRequest, "missing push subscription")
+		return
+	case name == "" || len(name) > maxName:
+		writeError(w, http.StatusBadRequest, "enter a name of at most 100 characters")
+		return
+	}
+	if err := webpush.Subscription(*sub).Validate(); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var t store.Target
+	if !s.update(w, func(st *store.State) error {
+		p := st.PushTarget(sub.Endpoint)
+		if p == nil {
+			p = st.AddTarget(store.Target{Type: store.Push})
+		}
+		p.Name, p.Push, p.Enabled = name, sub, true
+		p.LastSent, p.LastError = nil, ""
+		t = *p
 		return nil
 	}) {
 		return
@@ -74,7 +121,16 @@ func (s *Server) handleTargetEdit(w http.ResponseWriter, r *http.Request) {
 	if req.URL != nil {
 		url = strings.TrimSpace(*req.URL)
 	}
-	if name != old.Name || url != old.URL {
+	if old.Type == store.Push {
+		if url != old.URL {
+			writeError(w, http.StatusBadRequest, "a push target has no URL")
+			return
+		}
+		if name == "" || len(name) > maxName {
+			writeError(w, http.StatusBadRequest, "enter a name of at most 100 characters")
+			return
+		}
+	} else if name != old.Name || url != old.URL {
 		if err := s.validateTarget(r.Context(), name, url); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -118,6 +174,8 @@ func (s *Server) handleTargetTest(w http.ResponseWriter, r *http.Request) {
 		Title: "Dropcatch test notification",
 		Body:  "Notifications from Dropcatch reach you here.",
 		Kind:  notify.Info,
+		View:  "notifications",
+		Tag:   "test",
 	})
 	switch {
 	case errors.Is(err, store.ErrNotFound):

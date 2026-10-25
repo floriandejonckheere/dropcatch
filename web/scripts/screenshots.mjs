@@ -45,10 +45,19 @@ for (let i = 0; i < 120; i++) {
   await new Promise((r) => setTimeout(r, 500))
 }
 
-const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined })
+// The new headless mode, in which notifications can be allowed, so that
+// the Notifications page offers push.
+const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : { channel: 'chromium' })
 
 async function page(viewport, { mobile = false, scheme = 'dark' } = {}) {
-  const ctx = await browser.newContext({ viewport, colorScheme: scheme, deviceScaleFactor: mobile ? 2 : 1, hasTouch: mobile, isMobile: mobile })
+  const ctx = await browser.newContext({
+    viewport,
+    colorScheme: scheme,
+    deviceScaleFactor: mobile ? 2 : 1,
+    hasTouch: mobile,
+    isMobile: mobile,
+    permissions: ['notifications'],
+  })
   const p = await ctx.newPage()
   p.on('pageerror', (e) => console.error('page error:', e.message))
   return p

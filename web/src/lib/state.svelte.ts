@@ -10,6 +10,8 @@ class AppState {
   checking = $state<string[]>([])
   loaded = $state(false)
   connected = $state(false)
+  /** The connection to the server was lost and is being retried. */
+  offline = $state(false)
   #source: EventSource | null = null
 
   async load() {
@@ -28,10 +30,20 @@ class AppState {
     this.#source = es
     es.onopen = () => {
       this.connected = true
+      this.offline = false
       // Catch up on anything missed while disconnected.
       void this.load()
     }
-    es.onerror = () => (this.connected = false)
+    es.onerror = () => {
+      this.connected = false
+      this.offline = true
+      // EventSource retries by itself, but gives up when the server, or a
+      // proxy in front of it, answers with an error.
+      if (es.readyState === EventSource.CLOSED) {
+        this.#source = null
+        this.#reconnect()
+      }
+    }
     const on = <T>(type: string, fn: (data: T) => void) =>
       es.addEventListener(type, (e) => fn(JSON.parse((e as MessageEvent).data) as T))
     on<Domain>('domain', (d) => this.upsert(d))
@@ -42,6 +54,18 @@ class AppState {
     on<Target[]>('targets', (ts) => (this.targets = ts))
     on<Settings>('settings', (s) => (this.settings = s))
     on<string[]>('checking', (names) => (this.checking = names))
+  }
+
+  // Polls the server until it answers, then reconnects.
+  #reconnect() {
+    setTimeout(async () => {
+      try {
+        await api.config()
+        this.start()
+      } catch {
+        this.#reconnect()
+      }
+    }, 10_000)
   }
 
   upsert(d: Domain) {

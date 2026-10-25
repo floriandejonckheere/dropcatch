@@ -11,6 +11,7 @@ package monitor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -23,6 +24,7 @@ import (
 	"github.com/floriandejonckheere/dropcatch/internal/notify"
 	"github.com/floriandejonckheere/dropcatch/internal/ovh"
 	"github.com/floriandejonckheere/dropcatch/internal/store"
+	"github.com/floriandejonckheere/dropcatch/internal/webpush"
 )
 
 type Lookuper interface {
@@ -37,9 +39,17 @@ type Notifier interface {
 	Send(ctx context.Context, url, title, body, kind string) error
 }
 
+type Pusher interface {
+	Send(ctx context.Context, sub webpush.Subscription, payload []byte, ttl time.Duration, urgency string) error
+}
+
 // Message is a notification about a domain or VPS.
 type Message struct {
 	Title, Body, Kind string
+	// View is the part of the UI that push notifications open (domains,
+	// vps or notifications); Tag replaces an earlier notification with
+	// the same tag on the device.
+	View, Tag string
 }
 
 type Monitor struct {
@@ -47,6 +57,8 @@ type Monitor struct {
 	lookup Lookuper
 	ovh    StockChecker
 	notify Notifier
+	// Push sends to push targets; nil when push is unavailable.
+	Push Pusher
 
 	// Pause between two checks.
 	Pause time.Duration
@@ -318,6 +330,7 @@ func message(d store.Domain, prev string, changes bool) *Message {
 			Title: name + " is available",
 			Body:  name + " is not registered anymore and can be registered now.",
 			Kind:  notify.Success,
+			View:  "domains", Tag: d.Name,
 		}
 	case !changes || prev == store.Unknown:
 		return nil
@@ -326,18 +339,21 @@ func message(d store.Domain, prev string, changes bool) *Message {
 			Title: name + " is about to be deleted",
 			Body:  fmt.Sprintf("The registration of %s expired (%s). The registry deletes it at the end of this period, unless the owner restores it.", name, statusList(d.Statuses)),
 			Kind:  notify.Warning,
+			View:  "domains", Tag: d.Name,
 		}
 	case prev == store.Available:
 		return &Message{
 			Title: name + " was registered",
 			Body:  name + " was registered again" + by(d.Registrar) + ".",
 			Kind:  notify.Failure,
+			View:  "domains", Tag: d.Name,
 		}
 	case prev == store.Dropping:
 		return &Message{
 			Title: name + " was restored",
 			Body:  "The owner of " + name + " restored or renewed it" + by(d.Registrar) + ", so it will not become available.",
 			Kind:  notify.Info,
+			View:  "domains", Tag: d.Name,
 		}
 	}
 	return nil
@@ -381,8 +397,17 @@ func (m *Monitor) SendTo(ctx context.Context, id string, msg Message) error {
 		return store.ErrNotFound
 	}
 	sctx, cancel := context.WithTimeout(ctx, time.Minute)
-	err := m.notify.Send(sctx, t.URL, msg.Title, msg.Body, msg.Kind)
+	var err error
+	if t.Type == store.Push {
+		err = m.push(sctx, *t, msg)
+	} else {
+		err = m.notify.Send(sctx, t.URL, msg.Title, msg.Body, msg.Kind)
+	}
 	cancel()
+	gone := errors.Is(err, webpush.ErrGone)
+	if gone {
+		err = errors.New("the device unsubscribed (notifications were turned off, or the app removed); add it again from that device")
+	}
 	if err != nil {
 		slog.Warn("notification failed", "target", t.Name, "err", err)
 	} else {
@@ -399,8 +424,32 @@ func (m *Monitor) SendTo(ctx context.Context, id string, msg Message) error {
 		if err != nil {
 			t.LastError = err.Error()
 		}
+		if gone {
+			// Sending again can never succeed.
+			t.Enabled = false
+		}
 		return nil
 	})
 	m.OnTargets()
 	return err
+}
+
+// push sends msg to a push target. Availability wakes the device at once;
+// the push service keeps messages for a day while it is offline.
+func (m *Monitor) push(ctx context.Context, t store.Target, msg Message) error {
+	if m.Push == nil {
+		return errors.New("push notifications are not available")
+	}
+	if t.Push == nil {
+		return errors.New("the target has no push subscription")
+	}
+	payload, err := json.Marshal(map[string]string{"title": msg.Title, "body": msg.Body, "kind": msg.Kind, "view": msg.View, "tag": msg.Tag})
+	if err != nil {
+		return err
+	}
+	urgency := webpush.UrgencyNormal
+	if msg.Kind == notify.Success {
+		urgency = webpush.UrgencyHigh
+	}
+	return m.Push.Send(ctx, webpush.Subscription(*t.Push), payload, 24*time.Hour, urgency)
 }

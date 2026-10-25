@@ -52,7 +52,8 @@
   <div class="boot">
     {#if session.error}
       <p>{session.error}</p>
-      <button class="pill" onclick={() => session.load()}>Retry</button>
+      <p class="muted">Retrying every 10 seconds.</p>
+      <button class="pill" onclick={() => session.load()}>Retry now</button>
     {/if}
   </div>
 {:else if !session.authenticated}
@@ -76,6 +77,10 @@
         <span class="label">{app.checking.length ? `Checking ${app.checking.length}…` : 'Check all'}</span>
       </button>
     </header>
+
+    {#if app.offline}
+      <p class="offline" role="status"><Icon name="alert" size={15} />Cannot reach the server. Retrying…</p>
+    {/if}
 
     <main>
       {#if router.view === 'vps'}
@@ -103,6 +108,10 @@
     gap: 12px;
     min-height: 100dvh;
     color: var(--text-2);
+  }
+
+  .boot p {
+    margin: 0;
   }
 
   .app {
@@ -166,6 +175,19 @@
 
   .icon {
     display: grid;
+  }
+
+  .offline {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin: 0;
+    padding: 8px 16px;
+    background: color-mix(in srgb, var(--dropping) 14%, var(--bg));
+    color: var(--dropping);
+    font-size: 13px;
+    font-weight: 600;
   }
 
   main {

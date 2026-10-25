@@ -12,9 +12,10 @@ It runs as a single container with a small web UI, for one user behind a passwor
 - **Registration status**: registered, dropping (expired, in the redemption or pending delete period) or available, with the registrar, registration and expiry dates, the registry's status codes and a history of status changes
 - **Watch OVHcloud VPS**: choose the OVH shop (country), a plan from OVH's catalog (with its specifications and price) and any datacenter, whole regions (Europe, North America, Asia-Pacific) or individual datacenters. See the current stock of every datacenter, with a link to order, and when each datacenter had stock, on a timeline and in a table.
 - **Periodic checks** at an interval you choose (5 minutes to 7 days), and more often (every 2 minutes by default) while a VPS is in stock, one query at a time so that registries and OVH do not rate-limit you; check one or everything on demand
+- **Push notifications** to your phone or computer: enable them on the Notifications page of each device, and Dropcatch notifies it when a domain or VPS becomes available, even when the app is closed. No app store, account or third-party service to set up.
 - **Notifications** through any [Apprise URL](https://github.com/caronc/apprise/wiki#notification-services): ntfy, Telegram, Discord, Slack, Pushover, Gotify, e-mail and many more. Send a test from the UI. Optionally also notified when a domain enters its deletion period, is restored by its owner or is registered again, and when a VPS sells out again.
 - **Live updates**: check results appear without reloading
-- **Install** on a phone's home screen or as a desktop app
+- **Install** on a phone's home screen or as a desktop app; the installed app opens even when the server is down, and reconnects by itself when it is back
 - **Security**: password login with signed session cookies, rate-limited login attempts, CSRF protection
 
 ## Screenshots
@@ -61,6 +62,17 @@ While a watch is available, it is checked more often (every 2 minutes by default
 ### Checks
 
 Domains and VPS share one schedule and one interval, except that a VPS in stock is checked at the shorter in-stock interval. Checks run one at a time, with a two-second pause in between. A failed check (timeout, rate limit) keeps the last known status and is shown on the domain or VPS; it does not send a notification.
+
+### Push notifications
+
+Dropcatch sends [Web Push](https://developer.mozilla.org/en-US/docs/Web/API/Push_API) notifications itself, through the push service of each browser (Google's for Chrome and Android, Apple's for Safari and iOS, Mozilla's for Firefox). Open the Notifications page on the device and choose **Enable**; the device appears as a target, and gets the same notifications as the others, those about something becoming available with high priority.
+
+- Push needs Dropcatch to be served over **HTTPS** (or opened on `localhost`).
+- On **iPhone and iPad** (iOS 16.4 or later), add Dropcatch to the home screen first (Share → Add to Home Screen) and enable push from the installed app.
+- Dropcatch signs its messages with a key it creates in the data directory (`vapid.key`). Keep it with the rest of the data: with a new key, devices have to enable push again.
+- A device that turns notifications off or removes the app is disabled as a target the next time something is sent to it.
+
+Where the browser offers periodic background sync (Chrome, for installed apps), the app also checks in the background whether the server answers, and notifies when it stops and when it is back. The browser decides how often that runs (usually a few times a day at most), so it is a safety net rather than a monitor; other browsers do not run it.
 
 ## Quick start (Docker)
 
@@ -154,4 +166,4 @@ Without a password, anyone who can reach Dropcatch can see and change your domai
 
 ## Data
 
-Everything is stored in `dropcatch.json` in the data directory (readable by its owner only, as notification URLs often contain tokens), next to the session key and the list of logged-out sessions. Each change rewrites the file through a temporary file and a rename, so it is never left half-written. Back it up by copying the directory.
+Everything is stored in `dropcatch.json` in the data directory (readable by its owner only, as notification URLs often contain tokens), next to the session key, the push signing key (`vapid.key`) and the list of logged-out sessions. Each change rewrites the file through a temporary file and a rename, so it is never left half-written. Back it up by copying the directory.

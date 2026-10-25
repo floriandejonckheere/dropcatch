@@ -4,6 +4,7 @@ class Session {
   config = $state<ServerConfig | null>(null)
   authenticated = $state(true)
   error = $state('')
+  #retry: ReturnType<typeof setTimeout> | undefined
 
   constructor() {
     hooks.unauthorized = () => (this.authenticated = false)
@@ -15,7 +16,11 @@ class Session {
       this.authenticated = this.config.auth.authenticated
       this.error = ''
     } catch (e) {
-      this.error = (e as Error).message || 'Cannot reach the Dropcatch server.'
+      // fetch fails with a TypeError when the server cannot be reached.
+      this.error = e instanceof TypeError || !(e as Error).message ? 'Cannot reach the Dropcatch server.' : (e as Error).message
+      // Such as when the installed app opens while the server is down.
+      clearTimeout(this.#retry)
+      this.#retry = setTimeout(() => this.load(), 10_000)
     }
   }
 

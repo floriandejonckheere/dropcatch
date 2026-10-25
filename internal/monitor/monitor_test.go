@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -11,6 +12,7 @@ import (
 	"github.com/floriandejonckheere/dropcatch/internal/lookup"
 	"github.com/floriandejonckheere/dropcatch/internal/ovh"
 	"github.com/floriandejonckheere/dropcatch/internal/store"
+	"github.com/floriandejonckheere/dropcatch/internal/webpush"
 )
 
 type fakeLookup struct {
@@ -167,6 +169,41 @@ func TestQuietChanges(t *testing.T) {
 	m.check(ctx, "xn--bcher-kva.de")
 	if got := n.take(); len(got) != 2 || got[0].title != "bücher.de (xn--bcher-kva.de) is available" {
 		t.Fatalf("sent %+v", got)
+	}
+}
+
+type fakePush struct {
+	payloads  []map[string]string
+	urgencies []string
+}
+
+func (f *fakePush) Send(_ context.Context, _ webpush.Subscription, payload []byte, _ time.Duration, urgency string) error {
+	var p map[string]string
+	_ = json.Unmarshal(payload, &p)
+	f.payloads, f.urgencies = append(f.payloads, p), append(f.urgencies, urgency)
+	return nil
+}
+
+func TestPush(t *testing.T) {
+	m, st, l, _ := setup(t, "drop.com")
+	p := &fakePush{}
+	m.Push = p
+	_ = st.Update(func(s *store.State) error {
+		s.AddTarget(store.Target{Name: "phone", Type: store.Push, Push: &store.Subscription{Endpoint: "https://push.example/x"}, Enabled: true})
+		return nil
+	})
+	ctx := context.Background()
+	l.set("drop.com", lookup.Registered, nil)
+	m.check(ctx, "drop.com")
+	l.set("drop.com", lookup.Dropping, nil)
+	m.check(ctx, "drop.com")
+	l.set("drop.com", lookup.Available, nil)
+	m.check(ctx, "drop.com")
+	if len(p.payloads) != 2 || p.urgencies[0] != "normal" || p.urgencies[1] != "high" {
+		t.Fatalf("pushed %v with %v", p.payloads, p.urgencies)
+	}
+	if got := p.payloads[1]; got["title"] != "drop.com is available" || got["view"] != "domains" || got["tag"] != "drop.com" {
+		t.Fatalf("payload %v", got)
 	}
 }
 

@@ -29,6 +29,7 @@ type Server struct {
 	monitor *monitor.Monitor
 	ovh     OVH
 	apprise *notify.Apprise
+	pushKey string     // VAPID public key; empty when push is unavailable
 	auth    *auth.Auth // nil when authentication is disabled
 	events  *hub
 	ui      fs.FS
@@ -41,12 +42,12 @@ type OVH interface {
 }
 
 // New wires the server to the monitor's change callbacks.
-func New(cfg *config.Config, st *store.Store, m *monitor.Monitor, o OVH, apprise *notify.Apprise, ui fs.FS) (*Server, error) {
+func New(cfg *config.Config, st *store.Store, m *monitor.Monitor, o OVH, apprise *notify.Apprise, pushKey string, ui fs.FS) (*Server, error) {
 	a, err := auth.New(cfg.Username, cfg.Password, cfg.PasswordHash, cfg.Secret, cfg.DataDir)
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, store: st, monitor: m, ovh: o, apprise: apprise, auth: a, events: newHub(), ui: ui}
+	s := &Server{cfg: cfg, store: st, monitor: m, ovh: o, apprise: apprise, pushKey: pushKey, auth: a, events: newHub(), ui: ui}
 	m.OnDomain = func(d store.Domain) { s.events.publish("domain", view(d)) }
 	m.OnVPS = func(v store.VPS) { s.events.publish("vps", v) }
 	m.OnTargets = func() { s.events.publish("targets", s.store.Snapshot().Targets) }
@@ -104,6 +105,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
 		"version":         Version,
 		"apprise":         s.apprise.Path != "",
+		"pushKey":         s.pushKey,
 		"ovhSubsidiaries": ovh.Subsidiaries,
 		"limits": map[string]int{
 			"minInterval":      store.MinInterval,

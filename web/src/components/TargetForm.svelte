@@ -15,6 +15,7 @@
   let error = $state('')
   let busy = $state(false)
 
+  const isPush = initial.type === 'push'
   const examples = ['ntfy://my-topic', 'tgram://bottoken/chatid', 'discord://webhook_id/webhook_token', 'mailtos://user:password@example.com']
 
   async function save(e: SubmitEvent) {
@@ -22,7 +23,9 @@
     busy = true
     error = ''
     try {
-      const t = initial.id ? await api.editTarget(initial.id, { name, url, enabled }) : await api.addTarget({ name, url, enabled })
+      const t = initial.id
+        ? await api.editTarget(initial.id, isPush ? { name, enabled } : { name, url, enabled })
+        : await api.addTarget({ name, url, enabled })
       app.upsertTarget(t)
       toasts.show(initial.id ? `Saved ${t.name}` : `Added ${t.name}`, { kind: 'success' })
       onclose()
@@ -40,15 +43,19 @@
       <span>Name</span>
       <input class="input" bind:value={name} placeholder="My phone" maxlength="100" required />
     </label>
-    <label class="field">
-      <span>Apprise URL</span>
-      <input class="input mono" bind:value={url} placeholder="ntfy://my-topic" autocomplete="off" autocapitalize="off" spellcheck="false" required />
-    </label>
-    <p class="hint">
-      For example
-      {#each examples as ex, i (ex)}<code>{ex}</code>{i < examples.length - 1 ? ', ' : '.'}{/each}
-      See the <a href="https://github.com/caronc/apprise/wiki#notification-services" target="_blank" rel="noreferrer">list of services</a> for the URL of yours.
-    </p>
+    {#if isPush}
+      <p class="hint push">Push notifications to a browser or installed app. To move them to another device, enable them there.</p>
+    {:else}
+      <label class="field">
+        <span>Apprise URL</span>
+        <input class="input mono" bind:value={url} placeholder="ntfy://my-topic" autocomplete="off" autocapitalize="off" spellcheck="false" required />
+      </label>
+      <p class="hint">
+        For example
+        {#each examples as ex, i (ex)}<code>{ex}</code>{i < examples.length - 1 ? ', ' : '.'}{/each}
+        See the <a href="https://github.com/caronc/apprise/wiki#notification-services" target="_blank" rel="noreferrer">list of services</a> for the URL of yours.
+      </p>
+    {/if}
     <label class="check">
       <input type="checkbox" bind:checked={enabled} />
       Send notifications here
@@ -57,7 +64,7 @@
   </form>
   {#snippet footer()}
     <button class="pill" onclick={onclose}>Cancel</button>
-    <button class="pill primary" type="submit" form="target-form" disabled={busy || !name.trim() || !url.trim()}>{busy ? 'Checking…' : 'Save'}</button>
+    <button class="pill primary" type="submit" form="target-form" disabled={busy || !name.trim() || (!isPush && !url.trim())}>{busy ? 'Checking…' : 'Save'}</button>
   {/snippet}
 </Modal>
 
@@ -66,6 +73,10 @@
     display: flex;
     flex-direction: column;
     gap: 14px;
+  }
+
+  .hint.push {
+    margin: 0;
   }
 
   .mono {

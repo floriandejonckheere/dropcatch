@@ -1,7 +1,7 @@
 {
   "name": "Dropcatch",
   "short_name": "Dropcatch",
-  "description": "Domain availability monitor",
+  "description": "Domain and VPS availability monitor",
   "id": "./",
   "start_url": "./",
   "scope": "./",

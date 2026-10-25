@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/floriandejonckheere/dropcatch/internal/notify"
 	"github.com/floriandejonckheere/dropcatch/internal/ovh"
 	"github.com/floriandejonckheere/dropcatch/internal/store"
+	"github.com/floriandejonckheere/dropcatch/internal/webpush"
 	"github.com/floriandejonckheere/dropcatch/web"
 )
 
@@ -49,8 +51,13 @@ func run() error {
 	oc := ovh.New("dropcatch/" + api.Version)
 	oc.BaseURL = cfg.OVHAPI
 	mon := monitor.New(st, lc, oc, apprise)
+	push, err := webpush.New(filepath.Join(cfg.DataDir, "vapid.key"))
+	if err != nil {
+		return err
+	}
+	mon.Push = push
 
-	server, err := api.New(cfg, st, mon, oc, apprise, web.Dist())
+	server, err := api.New(cfg, st, mon, oc, apprise, push.PublicKey(), web.Dist())
 	if err != nil {
 		return err
 	}
