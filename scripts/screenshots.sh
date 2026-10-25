@@ -30,8 +30,9 @@ port=${PORT:-8765}
 registry=${REGISTRY_PORT:-8053}
 "$work/fakeregistry" --listen "127.0.0.1:$registry" >"$work/registry.log" 2>&1 &
 pids="$pids $!"
-"$work/dropcatch" --data-dir "$work/data" --listen "127.0.0.1:$port" --apprise "$work/apprise" \
-  --rdap-bootstrap "http://127.0.0.1:$registry/dns.json" --ovh-api "http://127.0.0.1:$registry/v1" >"$work/server.log" 2>&1 &
+DROPCATCH_HETZNER_TOKEN=fake "$work/dropcatch" --data-dir "$work/data" --listen "127.0.0.1:$port" --apprise "$work/apprise" \
+  --rdap-bootstrap "http://127.0.0.1:$registry/dns.json" --ovh-api "http://127.0.0.1:$registry/v1" \
+  --hetzner-api "http://127.0.0.1:$registry/v1" >"$work/server.log" 2>&1 &
 pids="$pids $!"
 for _ in $(seq 50); do
   curl -sf "http://127.0.0.1:$port/api/config" >/dev/null && break

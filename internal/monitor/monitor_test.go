@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/floriandejonckheere/dropcatch/internal/hetzner"
 	"github.com/floriandejonckheere/dropcatch/internal/lookup"
 	"github.com/floriandejonckheere/dropcatch/internal/ovh"
 	"github.com/floriandejonckheere/dropcatch/internal/store"
@@ -204,6 +205,44 @@ func TestPush(t *testing.T) {
 	}
 	if got := p.payloads[1]; got["title"] != "drop.com is available" || got["view"] != "domains" || got["tag"] != "drop.com" {
 		t.Fatalf("payload %v", got)
+	}
+}
+
+type fakeHetzner struct{ locs []hetzner.Location }
+
+func (f *fakeHetzner) Stock(_ context.Context, plan string) ([]hetzner.Location, error) {
+	return f.locs, nil
+}
+
+func TestHetzner(t *testing.T) {
+	m, st, _, n := setup(t)
+	var v *store.VPS
+	_ = st.Update(func(s *store.State) error {
+		v, _ = s.AddVPS(store.VPS{Provider: store.Hetzner, Plan: "cax11", PlanName: "CAX11", Datacenters: []string{"fsn1", "nbg1"}}, time.Now())
+		return nil
+	})
+	ctx := context.Background()
+
+	// Without a token, the check fails and nothing is sent.
+	m.check(ctx, VPSKey(v.ID))
+	if w := st.Snapshot().VPSWatch(v.ID); w.Status != store.Unknown || !strings.Contains(w.Error, "API token") || len(n.take()) != 0 {
+		t.Fatalf("without token: %+v", w)
+	}
+
+	h := &fakeHetzner{locs: []hetzner.Location{
+		{Code: "fsn1", Name: "Falkenstein, Germany", Region: "europe"},
+		{Code: "hel1", Name: "Helsinki, Finland", Region: "europe", Available: true},
+	}}
+	m.Hetzner = h
+	m.check(ctx, VPSKey(v.ID))
+	if w := st.Snapshot().VPSWatch(v.ID); w.Status != store.OutOfStock || w.Error != "" || len(n.take()) != 0 {
+		t.Fatalf("out of stock in the watched locations: %+v", w)
+	}
+	h.locs[0].Available = true
+	m.check(ctx, VPSKey(v.ID))
+	got := n.take()
+	if len(got) != 2 || got[0].title != "CAX11 is available" || !strings.Contains(got[0].body, "Hetzner Cloud CAX11 (cax11) can be ordered in Falkenstein, Germany: https://console.hetzner.com/") {
+		t.Fatalf("sent %+v", got)
 	}
 }
 

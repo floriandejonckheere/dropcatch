@@ -15,6 +15,7 @@ import (
 
 	"github.com/floriandejonckheere/dropcatch/internal/auth"
 	"github.com/floriandejonckheere/dropcatch/internal/config"
+	"github.com/floriandejonckheere/dropcatch/internal/hetzner"
 	"github.com/floriandejonckheere/dropcatch/internal/monitor"
 	"github.com/floriandejonckheere/dropcatch/internal/notify"
 	"github.com/floriandejonckheere/dropcatch/internal/ovh"
@@ -28,6 +29,7 @@ type Server struct {
 	store   *store.Store
 	monitor *monitor.Monitor
 	ovh     OVH
+	hetzner Hetzner
 	apprise *notify.Apprise
 	pushKey string     // VAPID public key; empty when push is unavailable
 	auth    *auth.Auth // nil when authentication is disabled
@@ -41,13 +43,21 @@ type OVH interface {
 	Stock(ctx context.Context, subsidiary, plan string) ([]ovh.Datacenter, error)
 }
 
+// Hetzner reads Hetzner Cloud server types and their availability (a
+// *hetzner.Client).
+type Hetzner interface {
+	Configured() bool
+	Plans(ctx context.Context) (hetzner.Catalog, error)
+	Stock(ctx context.Context, plan string) ([]hetzner.Location, error)
+}
+
 // New wires the server to the monitor's change callbacks.
-func New(cfg *config.Config, st *store.Store, m *monitor.Monitor, o OVH, apprise *notify.Apprise, pushKey string, ui fs.FS) (*Server, error) {
+func New(cfg *config.Config, st *store.Store, m *monitor.Monitor, o OVH, hz Hetzner, apprise *notify.Apprise, pushKey string, ui fs.FS) (*Server, error) {
 	a, err := auth.New(cfg.Username, cfg.Password, cfg.PasswordHash, cfg.Secret, cfg.DataDir)
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, store: st, monitor: m, ovh: o, apprise: apprise, pushKey: pushKey, auth: a, events: newHub(), ui: ui}
+	s := &Server{cfg: cfg, store: st, monitor: m, ovh: o, hetzner: hz, apprise: apprise, pushKey: pushKey, auth: a, events: newHub(), ui: ui}
 	m.OnDomain = func(d store.Domain) { s.events.publish("domain", view(d)) }
 	m.OnVPS = func(v store.VPS) { s.events.publish("vps", v) }
 	m.OnTargets = func() { s.events.publish("targets", s.store.Snapshot().Targets) }
@@ -74,6 +84,8 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/ovh/plans", s.handleOVHPlans)
 	mux.HandleFunc("GET /api/ovh/stock", s.handleOVHStock)
+	mux.HandleFunc("GET /api/hetzner/plans", s.handleHetznerPlans)
+	mux.HandleFunc("GET /api/hetzner/stock", s.handleHetznerStock)
 	mux.HandleFunc("POST /api/vps", s.handleVPSAdd)
 	mux.HandleFunc("PATCH /api/vps/{id}", s.handleVPSEdit)
 	mux.HandleFunc("DELETE /api/vps/{id}", s.handleVPSRemove)
@@ -106,6 +118,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"version":         Version,
 		"apprise":         s.apprise.Path != "",
 		"pushKey":         s.pushKey,
+		"hetzner":         s.hetzner.Configured(),
 		"ovhSubsidiaries": ovh.Subsidiaries,
 		"limits": map[string]int{
 			"minInterval":      store.MinInterval,

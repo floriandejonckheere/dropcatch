@@ -2,7 +2,7 @@
   import type { VPS } from '../lib/api'
   import { date, dateTime, regionLabel, relative, statusLabel } from '../lib/format'
   import { app } from '../lib/state.svelte'
-  import { vpsActions } from '../lib/vps'
+  import { orderUrl, planLine, place, places, providerName, vpsActions } from '../lib/vps'
   import Icon from './Icon.svelte'
   import Modal from './Modal.svelte'
   import StatusBadge from './StatusBadge.svelte'
@@ -11,9 +11,6 @@
   let { vps: v, now, onclose, onedit }: { vps: VPS; now: number; onclose: () => void; onedit: () => void } = $props()
 
   const checking = $derived(app.checking.includes(`vps:${v.id}`))
-  const orderUrl = $derived(
-    v.subsidiary === 'US' ? 'https://us.ovhcloud.com/vps/' : `https://www.ovhcloud.com/en/vps/configurator/?planCode=${encodeURIComponent(v.plan)}`,
-  )
   const watches = (code: string) => !v.datacenters.length || v.datacenters.includes(code)
 
   async function remove() {
@@ -24,9 +21,9 @@
 <Modal title={v.planName} {onclose} width="580px" focusField={false}>
   <div class="head">
     <StatusBadge status={v.status} paused={v.paused} />
-    <span class="muted mono">{v.plan} · {v.subsidiary}</span>
+    <span class="muted mono">{planLine(v)}</span>
     {#if v.status === 'available'}
-      <a class="order" href={orderUrl} target="_blank" rel="noreferrer">Order on OVHcloud <Icon name="external" size={14} /></a>
+      <a class="order" href={orderUrl(v)} target="_blank" rel="noreferrer">Order on {providerName(v.provider)} <Icon name="external" size={14} /></a>
     {/if}
   </div>
 
@@ -36,7 +33,7 @@
 
   <dl>
     <dt>Watching</dt>
-    <dd>{v.datacenters.length ? `${v.datacenters.length} datacenter${v.datacenters.length > 1 ? 's' : ''}` : 'Any datacenter'}</dd>
+    <dd>{v.datacenters.length ? places(v.provider, v.datacenters.length) : `Any ${place(v.provider)}`}</dd>
     <dt>Last checked</dt>
     <dd>{checking ? 'Checking now…' : v.checked ? `${dateTime(v.checked)} (${relative(v.checked, now)})` : 'Never'}</dd>
     <dt>Watching since</dt>
@@ -58,7 +55,7 @@
         </li>
       {/each}
     </ul>
-    {#if v.datacenters.length}<p class="hint">Datacenters you do not watch are dimmed.</p>{/if}
+    {#if v.datacenters.length}<p class="hint">{place(v.provider) === 'location' ? 'Locations' : 'Datacenters'} you do not watch are dimmed.</p>{/if}
   {/if}
 
   {#if v.status !== 'unknown'}

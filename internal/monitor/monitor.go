@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/floriandejonckheere/dropcatch/internal/hetzner"
 	"github.com/floriandejonckheere/dropcatch/internal/lookup"
 	"github.com/floriandejonckheere/dropcatch/internal/notify"
 	"github.com/floriandejonckheere/dropcatch/internal/ovh"
@@ -33,6 +34,10 @@ type Lookuper interface {
 
 type StockChecker interface {
 	Stock(ctx context.Context, subsidiary, plan string) ([]ovh.Datacenter, error)
+}
+
+type HetznerStock interface {
+	Stock(ctx context.Context, plan string) ([]hetzner.Location, error)
 }
 
 type Notifier interface {
@@ -59,6 +64,8 @@ type Monitor struct {
 	notify Notifier
 	// Push sends to push targets; nil when push is unavailable.
 	Push Pusher
+	// Hetzner checks Hetzner Cloud server types; nil when not configured.
+	Hetzner HetznerStock
 
 	// Pause between two checks.
 	Pause time.Duration

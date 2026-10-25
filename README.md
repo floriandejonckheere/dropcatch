@@ -1,6 +1,6 @@
 # Dropcatch
 
-A small, self-hosted availability monitor for domain names and OVHcloud VPS. Add the domain names you want, and Dropcatch asks their registries periodically whether they are still registered. Pick the OVHcloud VPS plans you want and the datacenters or regions they should run in, and Dropcatch watches OVH's stock. When something becomes available, it notifies you on your phone, chat or e-mail through [Apprise](https://github.com/caronc/apprise).
+A small, self-hosted availability monitor for domain names, OVHcloud VPS and Hetzner Cloud servers. Add the domain names you want, and Dropcatch asks their registries periodically whether they are still registered. Pick the OVHcloud VPS plans or Hetzner Cloud server types you want and the datacenters, locations or regions they should run in, and Dropcatch watches their stock. When something becomes available, it sends a push notification to your phone, or notifies you in chat or by e-mail through [Apprise](https://github.com/caronc/apprise).
 
 It runs as a single container with a small web UI, for one user behind a password.
 
@@ -11,6 +11,7 @@ It runs as a single container with a small web UI, for one user behind a passwor
 - **Watch domains**: add several at once (`example.com example.net`), with an optional note; pause, resume or remove them. Internationalised names (`bücher.de`) and pasted URLs work; subdomains are reduced to the registered domain.
 - **Registration status**: registered, dropping (expired, in the redemption or pending delete period) or available, with the registrar, registration and expiry dates, the registry's status codes and a history of status changes
 - **Watch OVHcloud VPS**: choose the OVH shop (country), a plan from OVH's catalog (with its specifications and price) and any datacenter, whole regions (Europe, North America, Asia-Pacific) or individual datacenters. See the current stock of every datacenter, with a link to order, and when each datacenter had stock, on a timeline and in a table.
+- **Watch Hetzner Cloud servers**: any server type, shared or dedicated vCPU, x86 or Arm64 (Ampere), in any location (Falkenstein, Nuremberg, Helsinki, Ashburn, Hillsboro, Singapore) or region, with the same stock view and history. Needs a read-only Hetzner Cloud API token.
 - **Periodic checks** at an interval you choose (5 minutes to 7 days), and more often (every 2 minutes by default) while a VPS is in stock, one query at a time so that registries and OVH do not rate-limit you; check one or everything on demand
 - **Push notifications** to your phone or computer: enable them on the Notifications page of each device, and Dropcatch notifies it when a domain or VPS becomes available, even when the app is closed. No app store, account or third-party service to set up.
 - **Notifications** through any [Apprise URL](https://github.com/caronc/apprise/wiki#notification-services): ntfy, Telegram, Discord, Slack, Pushover, Gotify, e-mail and many more. Send a test from the UI. Optionally also notified when a domain enters its deletion period, is restored by its owner or is registered again, and when a VPS sells out again.
@@ -38,7 +39,7 @@ It runs as a single container with a small web UI, for one user behind a passwor
   <img src="docs/screenshots/mobile-vps.jpg" alt="VPS on a phone" width="260">
 </p>
 
-The screenshots are generated against a fake registry and OVH API with `make screenshots` (see [Development](#development)).
+The screenshots are generated against a fake registry, OVH API and Hetzner API with `make screenshots` (see [Development](#development)).
 
 ## How it works
 
@@ -58,6 +59,12 @@ Dropcatch reads OVH's public API, which needs no OVH account: the stock of a pla
 A plan counts as in stock in a datacenter when both the plan and its Linux images are available there. A watch is **available** when at least one datacenter it watches has stock. Every time stock appears in a watched datacenter that had none, every enabled notification target is notified with the datacenters and a link to order.
 
 While a watch is available, it is checked more often (every 2 minutes by default, set in the settings) until it sells out again, so that its stock history shows how long the stock lasted. The history records, for every datacenter that offers the plan, when it had stock: from the first check that saw the stock to the first that did not. The last 100 periods are kept.
+
+### Hetzner Cloud
+
+Hetzner's API needs a token, but any project's will do, and read-only is enough: create one in the [Hetzner Console](https://console.hetzner.com/) under *Security → API tokens* and pass it as `DROPCATCH_HETZNER_TOKEN` (or in a file with `--hetzner-token-file`). Dropcatch only reads `/server_types` and `/locations`.
+
+Each server type lists the locations that offer it, with whether it can be ordered there now; a watch is **available** when one of its locations can. The form groups the server types by CPU (shared or dedicated vCPU) and architecture (x86, which Hetzner also calls amd64, or Arm64), with their size and lowest monthly price. Server types that Hetzner has retired in a location are not offered there. Hetzner points out that availability is an indication rather than a guarantee: an order can still fail.
 
 ### Checks
 
@@ -110,6 +117,8 @@ services:
     environment:
       DROPCATCH_PASSWORD: change-me   # or DROPCATCH_PASSWORD_HASH (bcrypt)
       # DROPCATCH_USERNAME: admin
+      # Read-only Hetzner Cloud API token, to watch Hetzner Cloud servers.
+      # DROPCATCH_HETZNER_TOKEN: your-token
 
 volumes:
   dropcatch-data:
@@ -135,10 +144,10 @@ For frontend development, also run `cd web && npm run dev`. Vite proxies `/api` 
 | `make test` | `go vet` and the Go tests |
 | `make check` | `make test` plus the frontend type check |
 | `make build` | Builds the web UI and the `./dropcatch` binary |
-| `make fakeregistry` | Runs a fake RDAP registry and OVH API on port 8053 for local testing |
+| `make fakeregistry` | Runs a fake RDAP registry, OVH API and Hetzner Cloud API on port 8053 for local testing |
 | `make screenshots` | Regenerates `docs/screenshots` |
 
-The fake registry answers for common TLDs: names starting with `free` are available, names starting with `drop` are pending deletion, and all others are registered. It also offers four VPS plans: VPS-1 is out of stock everywhere (until `--restock-after`, if given, then in Roubaix; with `--restock-for`, it sells out again after that long, and restocks again and again), and the others have stock in some datacenters. Point Dropcatch at it with `--rdap-bootstrap http://127.0.0.1:8053/dns.json --ovh-api http://127.0.0.1:8053/v1`. `make screenshots` needs Playwright's Chromium (`cd web && npx playwright install chromium`, or set `CHROMIUM_PATH`). Regenerate the screenshots whenever the UI changes.
+The fake registry answers for common TLDs: names starting with `free` are available, names starting with `drop` are pending deletion, and all others are registered. It also offers four VPS plans: VPS-1 is out of stock everywhere (until `--restock-after`, if given, then in Roubaix; with `--restock-for`, it sells out again after that long, and restocks again and again), and the others have stock in some datacenters. Its Hetzner Cloud API accepts any token and lists the current server types in the six locations; CAX11 is out of stock everywhere and restocks in Falkenstein like VPS-1. Point Dropcatch at it with `--rdap-bootstrap http://127.0.0.1:8053/dns.json --ovh-api http://127.0.0.1:8053/v1 --hetzner-api http://127.0.0.1:8053/v1 --hetzner-token fake`. `make screenshots` needs Playwright's Chromium (`cd web && npx playwright install chromium`, or set `CHROMIUM_PATH`). Regenerate the screenshots whenever the UI changes.
 
 Instructions for coding agents are in [AGENTS.md](AGENTS.md).
 
@@ -159,10 +168,13 @@ These are set when starting Dropcatch; the check interval and notifications are 
 | `--apprise` | auto-detected on `PATH` | Path to the Apprise CLI |
 | `--rdap-bootstrap` | `https://data.iana.org/rdap/dns.json` | RDAP bootstrap file that lists the RDAP server of each TLD |
 | `--ovh-api` | the API of each OVH shop | Base URL of the OVH API (such as `https://eu.api.ovh.com/v1`), for all shops |
+| `--hetzner-token` | | Hetzner Cloud API token (read-only is enough), needed to watch Hetzner Cloud servers |
+| `--hetzner-token-file` | | Read the Hetzner token from a file instead |
+| `--hetzner-api` | `https://api.hetzner.cloud/v1` | Base URL of the Hetzner Cloud API |
 
 In Docker, `PUID` and `PGID` (default `1000`) set the user and group Dropcatch runs as.
 
-Without a password, anyone who can reach Dropcatch can see and change your domains and notification URLs; it logs a warning at startup. Pass the password and secret through environment variables or files rather than command-line flags, which other users on the host can see in the process list. To create a bcrypt hash: `htpasswd -bnBC 10 "" 'your-password' | tr -d ':\n'`.
+Without a password, anyone who can reach Dropcatch can see and change your domains and notification URLs; it logs a warning at startup. Pass the password, secret and Hetzner token through environment variables or files rather than command-line flags, which other users on the host can see in the process list. To create a bcrypt hash: `htpasswd -bnBC 10 "" 'your-password' | tr -d ':\n'`.
 
 ## Data
 

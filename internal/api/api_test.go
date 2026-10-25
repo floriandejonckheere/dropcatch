@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/floriandejonckheere/dropcatch/internal/config"
+	"github.com/floriandejonckheere/dropcatch/internal/hetzner"
 	"github.com/floriandejonckheere/dropcatch/internal/lookup"
 	"github.com/floriandejonckheere/dropcatch/internal/monitor"
 	"github.com/floriandejonckheere/dropcatch/internal/notify"
@@ -43,6 +44,21 @@ func (fakeOVH) Stock(_ context.Context, sub, plan string) ([]ovh.Datacenter, err
 	return []ovh.Datacenter{{Code: "eu-west-gra", Name: "Gravelines, France", Region: ovh.Europe, Available: true}}, nil
 }
 
+type fakeHetzner struct{ token bool }
+
+func (f fakeHetzner) Configured() bool { return f.token }
+
+func (fakeHetzner) Plans(context.Context) (hetzner.Catalog, error) {
+	return hetzner.Catalog{Currency: "EUR", Plans: []hetzner.Plan{{Code: "cax11", Name: "CAX11", CPUType: "shared", Architecture: "arm"}}}, nil
+}
+
+func (fakeHetzner) Stock(_ context.Context, plan string) ([]hetzner.Location, error) {
+	if plan != "cax11" {
+		return nil, errors.New("Hetzner has no server type " + plan)
+	}
+	return []hetzner.Location{{Code: "fsn1", Name: "Falkenstein, Germany", Region: "europe", Available: true}}, nil
+}
+
 type fakePush struct{ sent []webpush.Subscription }
 
 func (f *fakePush) Send(_ context.Context, sub webpush.Subscription, _ []byte, _ time.Duration, _ string) error {
@@ -61,6 +77,10 @@ type testServer struct {
 }
 
 func newServer(t *testing.T, password string) *testServer {
+	return newServerWith(t, password, fakeHetzner{token: true})
+}
+
+func newServerWith(t *testing.T, password string, hz Hetzner) *testServer {
 	cfg := &config.Config{DataDir: t.TempDir(), BasePath: "/", Password: password}
 	st, err := store.Open(cfg.DataDir)
 	if err != nil {
@@ -71,7 +91,7 @@ func newServer(t *testing.T, password string) *testServer {
 	m := monitor.New(st, noLookup{}, o, apprise)
 	ui := fstest.MapFS{"index.html": {Data: []byte("<html>dropcatch</html>")}}
 	m.Push = &fakePush{}
-	s, err := New(cfg, st, m, o, apprise, "BPublicKey", ui)
+	s, err := New(cfg, st, m, o, hz, apprise, "BPublicKey", ui)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,6 +290,51 @@ func TestPushTargets(t *testing.T) {
 	}
 	if ts.store.Snapshot().Target(tg.ID).Enabled {
 		t.Fatal("gone target still enabled")
+	}
+}
+
+func TestHetznerVPS(t *testing.T) {
+	ts := newServer(t, "")
+	var cat hetzner.Catalog
+	if code := ts.do("GET", "/api/hetzner/plans", nil, &cat); code != http.StatusOK || len(cat.Plans) != 1 {
+		t.Fatalf("plans: %d %+v", code, cat)
+	}
+	var stock struct{ Datacenters []hetzner.Location }
+	if code := ts.do("GET", "/api/hetzner/stock?plan=cax11", nil, &stock); code != http.StatusOK || len(stock.Datacenters) != 1 {
+		t.Fatalf("stock: %d %+v", code, stock)
+	}
+	if code := ts.do("GET", "/api/hetzner/stock?plan=CAX11!", nil, nil); code != http.StatusBadRequest {
+		t.Fatalf("stock of an invalid server type: %d", code)
+	}
+
+	var v store.VPS
+	add := map[string]any{"provider": "hetzner", "subsidiary": "FR", "plan": "cax11", "planName": "CAX11", "datacenters": []string{"fsn1", "ash"}}
+	if code := ts.do("POST", "/api/vps", add, &v); code != http.StatusOK || v.Provider != store.Hetzner || v.Subsidiary != "" ||
+		strings.Join(v.Datacenters, ",") != "ash,fsn1" {
+		t.Fatalf("add: %d %+v", code, v)
+	}
+	// The same server type from OVH would be another watch.
+	if code := ts.do("POST", "/api/vps", add, nil); code != http.StatusConflict {
+		t.Fatalf("adding the same watch twice: %d", code)
+	}
+	for _, bad := range []map[string]any{
+		{"provider": "hetzner", "plan": "CX23"},
+		{"provider": "linode", "plan": "g6-nanode-1"},
+	} {
+		if code := ts.do("POST", "/api/vps", bad, nil); code != http.StatusBadRequest {
+			t.Errorf("add %v: %d", bad, code)
+		}
+	}
+
+	// Without a token, Hetzner watches cannot be added.
+	ts = newServerWith(t, "", fakeHetzner{})
+	var res struct{ Error string }
+	if code := ts.do("POST", "/api/vps", add, &res); code != http.StatusBadRequest || !strings.Contains(res.Error, "DROPCATCH_HETZNER_TOKEN") {
+		t.Fatalf("add without token: %d %+v", code, res)
+	}
+	var cfg struct{ Hetzner bool }
+	if ts.do("GET", "/api/config", nil, &cfg); cfg.Hetzner {
+		t.Fatal("config reports a Hetzner token")
 	}
 }
 

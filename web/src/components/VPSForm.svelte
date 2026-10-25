@@ -1,11 +1,11 @@
 <script lang="ts">
   import { untrack } from 'svelte'
-  import { api, type Catalog, type Region, type Stock, type VPS } from '../lib/api'
+  import { api, type Catalog, type Plan, type Provider, type Region, type Stock, type VPS } from '../lib/api'
   import { regionLabel } from '../lib/format'
   import { session } from '../lib/session.svelte'
   import { app } from '../lib/state.svelte'
   import { toasts } from '../lib/toasts.svelte'
-  import { planSummary } from '../lib/vps'
+  import { family, place, planLine, planSummary, providerName } from '../lib/vps'
   import Modal from './Modal.svelte'
 
   let { watch, onclose }: { watch: Partial<VPS>; onclose: () => void } = $props()
@@ -14,7 +14,8 @@
   const initial = untrack(() => $state.snapshot(watch))
   const editing = !!initial.id
 
-  let subsidiary = $state(initial.subsidiary ?? 'FR')
+  let provider = $state<Provider>(initial.provider ?? 'ovh')
+  let subsidiary = $state(initial.subsidiary || 'FR')
   let plan = $state(initial.plan ?? '')
   let note = $state(initial.note ?? '')
   let any = $state(!initial.datacenters?.length)
@@ -29,48 +30,67 @@
   let busy = $state(false)
 
   const planName = $derived(catalog?.plans.find((p) => p.code === plan)?.name ?? initial.planName ?? plan)
+  const hetzner = $derived(provider === 'hetzner')
+  // Hetzner needs an API token, set when starting Dropcatch.
+  const noToken = $derived(hetzner && !session.config?.hetzner)
+  const where = $derived(place(provider))
 
-  // Load the plans of the subsidiary; when that fails, the plan code can
-  // still be typed in.
+  // Hetzner's server types, grouped by CPU type and architecture.
+  const families = $derived.by(() => {
+    const groups = new Map<string, Plan[]>()
+    for (const p of catalog?.plans ?? []) groups.set(family(p), [...(groups.get(family(p)) ?? []), p])
+    return [...groups.entries()]
+  })
+
+  // Load the plans of the provider (and OVH subsidiary); when that fails,
+  // the plan code can still be typed in.
   $effect(() => {
     if (editing) return
-    const sub = subsidiary
+    const [prov, sub] = [provider, subsidiary]
+    const current = () => prov === provider && sub === subsidiary
     catalog = null
     catalogError = ''
-    api
-      .ovhPlans(sub)
+    if (prov === 'hetzner' && !session.config?.hetzner) return
+    ;(prov === 'hetzner' ? api.hetznerPlans() : api.ovhPlans(sub))
       .then((c) => {
-        if (sub !== subsidiary) return
+        if (!current()) return
         catalog = c
         if (!c.plans.some((p) => p.code === untrack(() => plan))) plan = c.plans[0]?.code ?? ''
       })
       .catch((e) => {
-        if (sub === subsidiary) catalogError = (e as Error).message
+        if (current()) catalogError = (e as Error).message
       })
   })
 
   // Load the datacenters that offer the plan, with their current stock.
   let timer: ReturnType<typeof setTimeout>
   $effect(() => {
-    const [sub, p] = [subsidiary, plan.trim()]
+    const [prov, sub, p] = [provider, subsidiary, plan.trim()]
+    const current = () => prov === provider && sub === subsidiary && p === plan.trim()
     stock = null
     stockError = ''
     clearTimeout(timer)
-    loadingStock = !!p
-    if (!p) return
+    loadingStock = !!p && !noToken
+    if (!p || noToken) return
     // Typed plan codes are looked up once typing pauses.
     timer = setTimeout(() => {
-      api
-        .ovhStock(sub, p)
+      ;(prov === 'hetzner' ? api.hetznerStock(p) : api.ovhStock(sub, p))
         .then((r) => {
-          if (sub === subsidiary && p === plan.trim()) stock = r.datacenters
+          if (current()) stock = r.datacenters
         })
         .catch((e) => {
-          if (sub === subsidiary && p === plan.trim()) stockError = (e as Error).message
+          if (current()) stockError = (e as Error).message
         })
         .finally(() => (loadingStock = false))
     }, untrack(() => catalog) ? 0 : 500)
   })
+
+  function choose(p: Provider) {
+    if (p === provider) return
+    provider = p
+    plan = ''
+    picked = []
+  }
 
   const regions = $derived.by(() => {
     const groups = new Map<Region, Stock[]>()
@@ -91,7 +111,7 @@
   async function save(e: SubmitEvent) {
     e.preventDefault()
     if (!any && !picked.length) {
-      error = 'Choose at least one datacenter, or any datacenter.'
+      error = `Choose at least one ${where}, or any ${where}.`
       return
     }
     busy = true
@@ -100,7 +120,7 @@
     try {
       const v = editing
         ? await api.editVPS(initial.id!, { datacenters, note })
-        : await api.addVPS({ subsidiary, plan: plan.trim(), planName, datacenters, note })
+        : await api.addVPS({ provider, subsidiary: hetzner ? undefined : subsidiary, plan: plan.trim(), planName, datacenters, note })
       // The first check can finish, and arrive as an event, before this
       // response: keep that newer version.
       if (editing || !app.vps.some((x) => x.id === v.id)) app.upsertVPS(v)
@@ -114,11 +134,46 @@
   }
 </script>
 
-<Modal title={editing ? `Edit ${initial.planName}` : 'Watch an OVHcloud VPS'} {onclose} width="580px" focusField={!editing}>
+<Modal title={editing ? `Edit ${initial.planName}` : 'Watch a VPS'} {onclose} width="580px" focusField={!editing}>
   <form id="vps-form" onsubmit={save}>
     {#if editing}
-      <p class="fixed"><strong>{initial.planName}</strong> <span class="muted">{initial.plan} · {initial.subsidiary}</span></p>
+      <p class="fixed"><strong>{initial.planName}</strong> <span class="muted">{planLine({ provider, plan, subsidiary })}</span></p>
     {:else}
+      <div class="providers" role="radiogroup" aria-label="Provider">
+        {#each ['ovh', 'hetzner'] as const as p (p)}
+          <button type="button" role="radio" aria-checked={provider === p} class:active={provider === p} onclick={() => choose(p)}>{providerName(p)}</button>
+        {/each}
+      </div>
+    {/if}
+    {#if !editing && hetzner}
+      {#if noToken}
+        <p class="notice">
+          Hetzner Cloud's API needs a token. Create a <strong>read-only</strong> API token in any Hetzner Cloud project (Security → API tokens) and start Dropcatch
+          with <code>DROPCATCH_HETZNER_TOKEN</code> set to it.
+        </p>
+      {:else}
+        <label class="field">
+          <span>Server type</span>
+          {#if catalog}
+            <select class="input" bind:value={plan}>
+              {#each families as [name, plans] (name)}
+                <optgroup label={name}>
+                  {#each plans as p (p.code)}<option value={p.code}>{p.name} · {p.cores} vCPUs · {p.memory} GB</option>{/each}
+                </optgroup>
+              {/each}
+            </select>
+          {:else}
+            <input class="input mono" bind:value={plan} placeholder={catalogError ? 'cx23' : 'Loading server types…'} autocomplete="off" spellcheck="false" required />
+          {/if}
+        </label>
+        {#if catalog}
+          {@const p = catalog.plans.find((x) => x.code === plan)}
+          {#if p}<p class="hint">{planSummary(p, catalog.currency)}</p>{/if}
+        {:else if catalogError}
+          <p class="hint">Could not load the server types ({catalogError}). Enter the name of one, such as <code>cx23</code>.</p>
+        {/if}
+      {/if}
+    {:else if !editing}
       <div class="two">
         <label class="field">
           <span>OVHcloud shop</span>
@@ -146,52 +201,56 @@
       <p class="hint">The US shop sells OVHcloud US's own plans and datacenters; the others share the European, Canadian and Asia-Pacific ones.</p>
     {/if}
 
-    <fieldset>
-      <legend>Datacenters</legend>
-      <label class="check"><input type="radio" bind:group={any} value={true} /> Any datacenter</label>
-      <label class="check"><input type="radio" bind:group={any} value={false} /> Only these:</label>
+    {#if !noToken}
+      <fieldset>
+        <legend>{hetzner ? 'Locations' : 'Datacenters'}</legend>
+        <label class="check"><input type="radio" bind:group={any} value={true} /> Any {where}</label>
+        <label class="check"><input type="radio" bind:group={any} value={false} /> Only these:</label>
 
-      {#if loadingStock && !stock}
-        <p class="hint">Loading datacenters…</p>
-      {:else if stockError}
-        <p class="hint error">{stockError}</p>
-      {:else if stock}
-        <div class="regions" class:disabled={any}>
-          {#each regions as [region, dcs] (region)}
-            <div class="region">
-              <label class="check region-name">
-                <input
-                  type="checkbox"
-                  checked={dcs.every((d) => picked.includes(d.code))}
-                  indeterminate={dcs.some((d) => picked.includes(d.code)) && !dcs.every((d) => picked.includes(d.code))}
-                  onchange={() => toggleRegion(dcs)}
-                  disabled={any}
-                />
-                {regionLabel[region]}
-              </label>
-              {#each dcs as d (d.code)}
-                <label class="check dc">
-                  <input type="checkbox" checked={picked.includes(d.code)} onchange={() => toggle(d.code)} disabled={any} />
-                  <span>{d.name}</span>
-                  <span class="stock" class:in={d.available} title={d.available ? 'In stock now' : 'Out of stock now'}></span>
+        {#if loadingStock && !stock}
+          <p class="hint">Loading {where}s…</p>
+        {:else if stockError}
+          <p class="hint error">{stockError}</p>
+        {:else if stock}
+          <div class="regions" class:disabled={any}>
+            {#each regions as [region, dcs] (region)}
+              <div class="region">
+                <label class="check region-name">
+                  <input
+                    type="checkbox"
+                    checked={dcs.every((d) => picked.includes(d.code))}
+                    indeterminate={dcs.some((d) => picked.includes(d.code)) && !dcs.every((d) => picked.includes(d.code))}
+                    onchange={() => toggleRegion(dcs)}
+                    disabled={any}
+                  />
+                  {regionLabel[region]}
                 </label>
-              {/each}
-            </div>
-          {/each}
-        </div>
-        <p class="hint"><span class="stock in"></span> in stock now · <span class="stock"></span> out of stock</p>
-      {/if}
-    </fieldset>
+                {#each dcs as d (d.code)}
+                  <label class="check dc">
+                    <input type="checkbox" checked={picked.includes(d.code)} onchange={() => toggle(d.code)} disabled={any} />
+                    <span>{d.name}</span>
+                    <span class="stock" class:in={d.available} title={d.available ? 'In stock now' : 'Out of stock now'}></span>
+                  </label>
+                {/each}
+              </div>
+            {/each}
+          </div>
+          <p class="hint"><span class="stock in"></span> in stock now · <span class="stock"></span> out of stock</p>
+        {/if}
+      </fieldset>
+    {/if}
 
-    <label class="field">
-      <span>Note</span>
-      <input class="input" bind:value={note} placeholder="Optional" maxlength="500" />
-    </label>
+    {#if !noToken}
+      <label class="field">
+        <span>Note</span>
+        <input class="input" bind:value={note} placeholder="Optional" maxlength="500" />
+      </label>
+    {/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}
   </form>
   {#snippet footer()}
     <button class="pill" onclick={onclose}>Cancel</button>
-    <button class="pill primary" type="submit" form="vps-form" disabled={busy || (!editing && !plan.trim())}>{editing ? 'Save' : 'Watch'}</button>
+    <button class="pill primary" type="submit" form="vps-form" disabled={busy || noToken || (!editing && !plan.trim())}>{editing ? 'Save' : 'Watch'}</button>
   {/snippet}
 </Modal>
 
@@ -200,6 +259,40 @@
     display: flex;
     flex-direction: column;
     gap: 14px;
+  }
+
+  .providers {
+    display: flex;
+    gap: 4px;
+    padding: 4px;
+    border-radius: 999px;
+    background: var(--bg-elev-2);
+    align-self: flex-start;
+  }
+
+  .providers button {
+    height: 32px;
+    padding: 0 14px;
+    border-radius: 999px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-2);
+  }
+
+  .providers button.active {
+    background: var(--bg-elev);
+    color: var(--text);
+    box-shadow: 0 1px 3px rgb(0 0 0 / 0.15);
+  }
+
+  .notice {
+    margin: 0;
+    padding: 12px 14px;
+    border-radius: var(--radius);
+    background: var(--bg-elev-2);
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text-2);
   }
 
   .two {

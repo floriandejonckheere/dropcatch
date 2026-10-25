@@ -30,6 +30,12 @@ func TestParse(t *testing.T) {
 		t.Fatalf("DROPCATCH_PASSWORD_FILE: %q, %v", c.Password, err)
 	}
 
+	tok := t.TempDir() + "/token"
+	_ = os.WriteFile(tok, []byte("hz-token\n"), 0o600)
+	if c, err = Parse([]string{"--data-dir", dir, "--hetzner-token-file", tok}, func(string) string { return "" }); err != nil || c.HetznerToken != "hz-token" {
+		t.Fatalf("--hetzner-token-file: %q, %v", c.HetznerToken, err)
+	}
+
 	bad := [][]string{
 		{"--data-dir", ""},
 		{"--data-dir", dir, "--username", "admin"},

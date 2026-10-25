@@ -14,6 +14,7 @@ import (
 
 	"github.com/floriandejonckheere/dropcatch/internal/api"
 	"github.com/floriandejonckheere/dropcatch/internal/config"
+	"github.com/floriandejonckheere/dropcatch/internal/hetzner"
 	"github.com/floriandejonckheere/dropcatch/internal/lookup"
 	"github.com/floriandejonckheere/dropcatch/internal/monitor"
 	"github.com/floriandejonckheere/dropcatch/internal/notify"
@@ -50,14 +51,19 @@ func run() error {
 	lc.BootstrapURL = cfg.RDAPBootstrap
 	oc := ovh.New("dropcatch/" + api.Version)
 	oc.BaseURL = cfg.OVHAPI
+	hc := hetzner.New("dropcatch/"+api.Version, cfg.HetznerToken)
+	hc.BaseURL = cfg.HetznerAPI
 	mon := monitor.New(st, lc, oc, apprise)
+	if hc.Configured() {
+		mon.Hetzner = hc
+	}
 	push, err := webpush.New(filepath.Join(cfg.DataDir, "vapid.key"))
 	if err != nil {
 		return err
 	}
 	mon.Push = push
 
-	server, err := api.New(cfg, st, mon, oc, apprise, push.PublicKey(), web.Dist())
+	server, err := api.New(cfg, st, mon, oc, hc, apprise, push.PublicKey(), web.Dist())
 	if err != nil {
 		return err
 	}

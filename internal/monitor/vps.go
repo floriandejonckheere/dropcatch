@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/floriandejonckheere/dropcatch/internal/hetzner"
 	"github.com/floriandejonckheere/dropcatch/internal/notify"
 	"github.com/floriandejonckheere/dropcatch/internal/ovh"
 	"github.com/floriandejonckheere/dropcatch/internal/store"
@@ -21,13 +22,13 @@ func (m *Monitor) checkVPS(ctx context.Context, id string) {
 		return
 	}
 	sctx, cancel := context.WithTimeout(ctx, time.Duration(st.Settings.Timeout)*time.Second)
-	dcs, err := m.ovh.Stock(sctx, v.Subsidiary, v.Plan)
+	stock, err := m.stock(sctx, *v)
 	cancel()
 	if ctx.Err() != nil {
 		return
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		err = errors.New("OVH did not answer in time")
+		err = errors.New(store.ProviderName(v.Provider) + " did not answer in time")
 	}
 
 	now := m.now().UTC()
@@ -46,10 +47,6 @@ func (m *Monitor) checkVPS(ctx context.Context, id string) {
 		}
 		v.Error = ""
 		before := *v
-		stock := make([]store.Stock, len(dcs))
-		for i, d := range dcs {
-			stock[i] = store.Stock{Code: d.Code, Name: d.Name, Region: string(d.Region), Available: d.Available}
-		}
 		v.SetStock(stock, now)
 		msg = vpsMessage(before, *v, s.Settings.NotifyChanges)
 		updated = *v
@@ -73,6 +70,42 @@ func (m *Monitor) checkVPS(ctx context.Context, id string) {
 	}
 }
 
+// stock asks the watch's provider for the stock of its plan in every
+// datacenter or location that offers it.
+func (m *Monitor) stock(ctx context.Context, v store.VPS) ([]store.Stock, error) {
+	var stock []store.Stock
+	switch v.Provider {
+	case store.Hetzner:
+		if m.Hetzner == nil {
+			return nil, hetzner.ErrNoToken
+		}
+		locs, err := m.Hetzner.Stock(ctx, v.Plan)
+		if err != nil {
+			return nil, err
+		}
+		for _, l := range locs {
+			stock = append(stock, store.Stock{Code: l.Code, Name: l.Name, Region: l.Region, Available: l.Available})
+		}
+	default:
+		dcs, err := m.ovh.Stock(ctx, v.Subsidiary, v.Plan)
+		if err != nil {
+			return nil, err
+		}
+		for _, d := range dcs {
+			stock = append(stock, store.Stock{Code: d.Code, Name: d.Name, Region: string(d.Region), Available: d.Available})
+		}
+	}
+	return stock, nil
+}
+
+// orderURL returns where the watch's plan can be ordered.
+func orderURL(v store.VPS) string {
+	if v.Provider == store.Hetzner {
+		return hetzner.OrderURL
+	}
+	return ovh.OrderURL(v.Subsidiary, v.Plan)
+}
+
 // vpsMessage returns the notification for the change from before to after,
 // or nil. Stock appearing in a watched datacenter is always notified, also
 // when another one already had stock.
@@ -93,7 +126,7 @@ func vpsMessage(before, after store.VPS, changes bool) *Message {
 	if len(added) > 0 {
 		return &Message{
 			Title: name + " is available",
-			Body:  "OVHcloud " + name + " (" + after.Plan + ") can be ordered in " + strings.Join(added, "; ") + ": " + ovh.OrderURL(after.Subsidiary, after.Plan),
+			Body:  store.ProviderName(after.Provider) + " " + name + " (" + after.Plan + ") can be ordered in " + strings.Join(added, "; ") + ": " + orderURL(after),
 			Kind:  notify.Success,
 			View:  "vps", Tag: "vps:" + after.ID,
 		}
@@ -101,7 +134,7 @@ func vpsMessage(before, after store.VPS, changes bool) *Message {
 	if changes && before.Status == store.Available && after.Status == store.OutOfStock {
 		return &Message{
 			Title: name + " is out of stock",
-			Body:  "OVHcloud " + name + " (" + after.Plan + ") sold out again in the datacenters you watch.",
+			Body:  store.ProviderName(after.Provider) + " " + name + " (" + after.Plan + ") sold out again in the datacenters you watch.",
 			Kind:  notify.Warning,
 			View:  "vps", Tag: "vps:" + after.ID,
 		}

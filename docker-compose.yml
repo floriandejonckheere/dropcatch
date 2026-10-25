@@ -21,6 +21,8 @@ services:
       # or DROPCATCH_PASSWORD_FILE / DROPCATCH_PASSWORD_HASH_FILE to read it from a Docker secret.
       DROPCATCH_PASSWORD: change-me
       # DROPCATCH_USERNAME: admin
+      # Read-only Hetzner Cloud API token, to watch Hetzner Cloud servers.
+      # DROPCATCH_HETZNER_TOKEN: your-token
       # DROPCATCH_BASE_PATH: /dropcatch
       # TZ: Europe/Brussels
 

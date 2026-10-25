@@ -12,6 +12,11 @@
 // stock everywhere (until --restock-after, then in Roubaix for
 // --restock-for, again and again), and the others
 // have stock in some datacenters.
+//
+// Hetzner Cloud: it lists the current server types (shared x86 and Arm,
+// dedicated x86) in the six locations, for any API token. CAX11 is out of
+// stock everywhere (and back in Falkenstein like VPS-1 with
+// --restock-after), and the others are unavailable in some locations.
 package main
 
 import (
@@ -92,8 +97,88 @@ func main() {
 		}
 		fmt.Fprintf(w, `{"datacenters":[%s]}`, strings.Join(dcs, ","))
 	})
+	http.HandleFunc("GET /v1/locations", func(w http.ResponseWriter, r *http.Request) {
+		if !hetznerAuth(w, r) {
+			return
+		}
+		var locs []string
+		for i, l := range hetznerLocations {
+			locs = append(locs, fmt.Sprintf(`{"id":%d,"name":%q,"description":%q,"country":%q,"city":%q,"network_zone":%q}`, i+1, l.code, l.city, l.country, l.city, l.zone))
+		}
+		fmt.Fprintf(w, `{"locations":[%s],"meta":{"pagination":{"page":1,"per_page":50,"next_page":null,"last_page":1,"total_entries":%d}}}`, strings.Join(locs, ","), len(locs))
+	})
+	http.HandleFunc("GET /v1/server_types", func(w http.ResponseWriter, r *http.Request) {
+		if !hetznerAuth(w, r) {
+			return
+		}
+		name := r.URL.Query().Get("name")
+		var types []string
+		for i, t := range hetznerTypes {
+			if name != "" && t.name != name {
+				continue
+			}
+			var prices, locs []string
+			for j, l := range hetznerLocations {
+				if t.arch == "arm" && !strings.HasPrefix(l.zone, "eu") {
+					continue // Arm servers are only in Europe
+				}
+				price := fmt.Sprintf("%.4f", t.price*(1+0.2*float64(j/3)))
+				prices = append(prices, fmt.Sprintf(`{"location":%q,"price_hourly":{"net":"0.0100","gross":"0.0119"},"price_monthly":{"net":%q,"gross":%q},"included_traffic":21990232555520,"price_per_tb_traffic":{"net":"1.0000","gross":"1.1900"}}`, l.code, price, price))
+				// A fixed pattern of locations without stock.
+				avail := (i+j)%4 != 0
+				if t.name == "cax11" {
+					avail = l.code == "fsn1" && restocked(time.Since(started), *restock, *restockFor)
+				}
+				locs = append(locs, fmt.Sprintf(`{"id":%d,"name":%q,"deprecation":null,"available":%t,"recommended":false}`, j+1, l.code, avail))
+			}
+			types = append(types, fmt.Sprintf(`{"id":%d,"name":%q,"description":%q,"cores":%d,"memory":%d.0,"disk":%d,"deprecated":false,"deprecation":null,
+				"prices":[%s],"storage_type":"local","cpu_type":%q,"architecture":%q,"category":%q,"locations":[%s]}`,
+				100+i, t.name, strings.ToUpper(t.name), t.cores, t.memory, t.disk, strings.Join(prices, ","), t.cpu, t.arch, t.category, strings.Join(locs, ",")))
+		}
+		fmt.Fprintf(w, `{"server_types":[%s],"meta":{"pagination":{"page":1,"per_page":50,"previous_page":null,"next_page":null,"last_page":1,"total_entries":%d}}}`, strings.Join(types, ","), len(types))
+	})
 	log.Printf("fake registry on http://%s/dns.json", *listen)
 	log.Fatal(http.ListenAndServe(*listen, nil))
+}
+
+// hetznerAuth requires a token, as the Hetzner Cloud API does.
+func hetznerAuth(w http.ResponseWriter, r *http.Request) bool {
+	if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, `{"error":{"code":"unauthorized","message":"unable to authenticate"}}`)
+		return false
+	}
+	return true
+}
+
+var hetznerLocations = []struct{ code, city, country, zone string }{
+	{"fsn1", "Falkenstein", "DE", "eu-central"},
+	{"nbg1", "Nuremberg", "DE", "eu-central"},
+	{"hel1", "Helsinki", "FI", "eu-central"},
+	{"ash", "Ashburn, VA", "US", "us-east"},
+	{"hil", "Hillsboro, OR", "US", "us-west"},
+	{"sin", "Singapore", "SG", "ap-southeast"},
+}
+
+var hetznerTypes = []struct {
+	name, cpu, arch, category string
+	cores, memory, disk       int
+	price                     float64
+}{
+	{"cx23", "shared", "x86", "cost_optimized", 2, 4, 40, 3.49},
+	{"cx33", "shared", "x86", "cost_optimized", 4, 8, 80, 5.49},
+	{"cx43", "shared", "x86", "cost_optimized", 8, 16, 160, 9.49},
+	{"cx53", "shared", "x86", "cost_optimized", 16, 32, 320, 17.49},
+	{"cpx22", "shared", "x86", "regular_purpose", 2, 4, 80, 6.49},
+	{"cpx32", "shared", "x86", "regular_purpose", 4, 8, 160, 10.99},
+	{"cpx42", "shared", "x86", "regular_purpose", 8, 16, 320, 19.99},
+	{"cax11", "shared", "arm", "cost_optimized", 2, 4, 40, 3.79},
+	{"cax21", "shared", "arm", "cost_optimized", 4, 8, 80, 6.49},
+	{"cax31", "shared", "arm", "cost_optimized", 8, 16, 160, 12.49},
+	{"cax41", "shared", "arm", "cost_optimized", 16, 32, 320, 24.49},
+	{"ccx13", "dedicated", "x86", "general_purpose", 2, 8, 80, 12.49},
+	{"ccx23", "dedicated", "x86", "general_purpose", 4, 16, 160, 24.49},
+	{"ccx33", "dedicated", "x86", "general_purpose", 8, 32, 240, 48.49},
 }
 
 // restocked reports whether VPS-1 is in stock after running for d: from

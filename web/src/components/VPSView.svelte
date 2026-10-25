@@ -2,7 +2,7 @@
   import type { VPS } from '../lib/api'
   import { relative } from '../lib/format'
   import { app } from '../lib/state.svelte'
-  import { city, vpsActions } from '../lib/vps'
+  import { city, planLine, place, vpsActions } from '../lib/vps'
   import Icon from './Icon.svelte'
   import { menu } from './Menu.svelte'
   import StatusBadge from './StatusBadge.svelte'
@@ -54,8 +54,8 @@
 <section class="view">
   <header>
     <div>
-      <h1>OVHcloud VPS</h1>
-      <p class="muted">Get notified when a VPS plan is back in stock in the datacenters you choose.</p>
+      <h1>VPS</h1>
+      <p class="muted">Get notified when an OVHcloud VPS or a Hetzner Cloud server is back in stock where you want it.</p>
     </div>
     <button class="pill primary" onclick={() => (editing = {})}><Icon name="plus" size={16} />Watch a VPS</button>
   </header>
@@ -69,7 +69,7 @@
         <li class="row card" class:paused={v.paused} class:available={v.status === 'available' && !v.paused}>
           <div class="status"><StatusBadge status={v.status} paused={v.paused} /></div>
           <button class="name" onclick={() => (details = v.id)}>
-            <span class="plan ellipsis">{v.planName} <span class="code">{v.plan} · {v.subsidiary}</span></span>
+            <span class="plan ellipsis">{v.planName} <span class="code">{planLine(v)}</span></span>
             {#if v.note}<span class="note ellipsis">{v.note}</span>{/if}
           </button>
           <div class="dcs">
@@ -80,7 +80,7 @@
             {:else if inStock(v).length}
               {#each inStock(v) as name (name)}<span class="dc in">{name}</span>{/each}
             {:else}
-              <span class="muted any">Any datacenter</span>
+              <span class="muted any">Any {place(v.provider)}</span>
             {/if}
           </div>
           <div class="checked">
@@ -107,7 +107,10 @@
     <div class="empty-state card">
       <Icon name="server" size={36} />
       <h2>No VPS watched</h2>
-      <p>Pick an OVHcloud VPS plan and the datacenters or regions you want. Dropcatch checks OVH's stock with your domains and notifies you when it can be ordered.</p>
+      <p>
+        Pick an OVHcloud VPS plan or a Hetzner Cloud server type, and the datacenters or regions you want. Dropcatch checks their stock with your domains and
+        notifies you when it can be ordered.
+      </p>
     </div>
   {/if}
 </section>

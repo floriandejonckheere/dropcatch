@@ -47,12 +47,16 @@ export interface Period {
   end?: string
 }
 
+export type Provider = 'ovh' | 'hetzner'
+
 export interface VPS {
   id: string
-  subsidiary: string
+  provider: Provider
+  /** OVH country shop; empty for Hetzner. */
+  subsidiary?: string
   plan: string
   planName: string
-  /** Watched datacenter codes; empty for any. */
+  /** Watched datacenter (OVH) or location (Hetzner) codes; empty for any. */
   datacenters: string[]
   note?: string
   paused?: boolean
@@ -75,6 +79,10 @@ export interface Plan {
   storage?: number
   disk?: string
   price?: number
+  /** Hetzner: shared or dedicated vCPUs. */
+  cpuType?: 'shared' | 'dedicated'
+  /** Hetzner: x86 or arm. */
+  architecture?: 'x86' | 'arm'
 }
 
 export interface Catalog {
@@ -123,6 +131,8 @@ export interface ServerConfig {
   apprise: boolean
   /** VAPID public key for push subscriptions; empty when push is unavailable. */
   pushKey: string
+  /** Whether a Hetzner Cloud API token is configured. */
+  hetzner: boolean
   ovhSubsidiaries: { code: string; name: string }[]
   limits: {
     minInterval: number
@@ -192,7 +202,9 @@ export const api = {
   ovhPlans: (subsidiary: string) => request<Catalog>('GET', `ovh/plans?subsidiary=${enc(subsidiary)}`),
   ovhStock: (subsidiary: string, plan: string) =>
     request<{ datacenters: Stock[] }>('GET', `ovh/stock?subsidiary=${enc(subsidiary)}&plan=${enc(plan)}`),
-  addVPS: (v: { subsidiary: string; plan: string; planName: string; datacenters: string[]; note: string }) => request<VPS>('POST', 'vps', v),
+  hetznerPlans: () => request<Catalog>('GET', 'hetzner/plans'),
+  hetznerStock: (plan: string) => request<{ datacenters: Stock[] }>('GET', `hetzner/stock?plan=${enc(plan)}`),
+  addVPS: (v: { provider: Provider; subsidiary?: string; plan: string; planName: string; datacenters: string[]; note: string }) => request<VPS>('POST', 'vps', v),
   editVPS: (id: string, patch: { datacenters?: string[]; note?: string; paused?: boolean }) => request<VPS>('PATCH', `vps/${enc(id)}`, patch),
   removeVPS: (id: string) => request<{ ok: boolean }>('DELETE', `vps/${enc(id)}`),
   checkVPS: (id: string) => request<{ ok: boolean }>('POST', `vps/${enc(id)}/check`),

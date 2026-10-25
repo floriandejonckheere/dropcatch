@@ -2,6 +2,7 @@
   import type { Period, VPS } from '../lib/api'
   import { date, dateTime, duration, minutes } from '../lib/format'
   import { app } from '../lib/state.svelte'
+  import { place } from '../lib/vps'
 
   let { vps: v, now }: { vps: VPS; now: number } = $props()
 
@@ -19,6 +20,7 @@
   let hovered = $state<{ period: Period; x: number; lane: number } | null>(null)
 
   const from = $derived(now - range.ms)
+  const where = $derived(place(v.provider))
   const watches = (code: string) => !v.datacenters.length || v.datacenters.includes(code)
   // An open period lasts at least until the last check, which saw the stock.
   const end = (p: Period) => new Date(p.end ?? v.checked ?? p.start).getTime()
@@ -93,13 +95,14 @@
 
 {#if lanes.length}
   <p class="summary">
-    {#if total > 0}
-      In stock for {duration(total)} of the last {range.label}{v.datacenters.length ? ' in the datacenters you watch' : ''}.
+    <!-- A period that just started lasts no time yet, but is stock. -->
+    {#if visible.some((p) => watches(p.code))}
+      In stock for {duration(total)} of the last {range.label}{v.datacenters.length ? ` in the ${where}s you watch` : ''}.
     {:else}
-      Not in stock in the datacenters you watch in the last {range.label}.
+      Not in stock in the {where}s you watch in the last {range.label}.
     {/if}
   </p>
-  <div class="chart" role="img" aria-label="Times each datacenter had stock; listed in the table below">
+  <div class="chart" role="img" aria-label="Times each {where} had stock; listed in the table below">
     {#each lanes as lane, i (lane.code)}
       <div class="lane" class:dim={!watches(lane.code)}>
         <span class="name" title={lane.name}>{lane.name}</span>
@@ -136,13 +139,13 @@
     </div>
   </div>
 {:else}
-  <p class="summary">No datacenter had stock in the last {range.label}.</p>
+  <p class="summary">No {where} had stock in the last {range.label}.</p>
 {/if}
 
 {#if periods.length}
   <table>
     <thead>
-      <tr><th>Datacenter</th><th>In stock from</th><th>Until</th><th class="num">For</th></tr>
+      <tr><th>{where === 'location' ? 'Location' : 'Datacenter'}</th><th>In stock from</th><th>Until</th><th class="num">For</th></tr>
     </thead>
     <tbody>
       {#each listed as p (p.code + p.start)}

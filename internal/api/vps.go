@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/floriandejonckheere/dropcatch/internal/hetzner"
 	"github.com/floriandejonckheere/dropcatch/internal/monitor"
 	"github.com/floriandejonckheere/dropcatch/internal/ovh"
 	"github.com/floriandejonckheere/dropcatch/internal/store"
@@ -17,6 +18,7 @@ import (
 var (
 	// Plan codes are case-sensitive: Local Zone plans end in ".LZ".
 	planCode       = regexp.MustCompile(`^[a-z0-9][a-zA-Z0-9._-]{1,63}$`)
+	serverType     = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,39}$`)
 	datacenterCode = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,39}$`)
 )
 
@@ -70,6 +72,36 @@ func (s *Server) handleOVHStock(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"datacenters": dcs})
 }
 
+// handleHetznerPlans lists the Hetzner Cloud server types for the form.
+func (s *Server) handleHetznerPlans(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), ovhQuery)
+	defer cancel()
+	cat, err := s.hetzner.Plans(ctx)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "could not load the Hetzner server types: "+err.Error())
+		return
+	}
+	writeJSON(w, cat)
+}
+
+// handleHetznerStock lists the locations of a server type with its
+// current availability, so that the form can offer them.
+func (s *Server) handleHetznerStock(w http.ResponseWriter, r *http.Request) {
+	plan := r.URL.Query().Get("plan")
+	if !serverType.MatchString(plan) {
+		writeError(w, http.StatusBadRequest, "invalid server type")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), ovhQuery)
+	defer cancel()
+	locs, err := s.hetzner.Stock(ctx, plan)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"datacenters": locs})
+}
+
 // cleanDatacenters validates and sorts datacenter codes.
 func cleanDatacenters(codes []string) ([]string, error) {
 	out := []string{}
@@ -88,6 +120,7 @@ func cleanDatacenters(codes []string) ([]string, error) {
 
 func (s *Server) handleVPSAdd(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		Provider    string   `json:"provider"`
 		Subsidiary  string   `json:"subsidiary"`
 		Plan        string   `json:"plan"`
 		PlanName    string   `json:"planName"`
@@ -99,13 +132,33 @@ func (s *Server) handleVPSAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Plan = strings.TrimSpace(req.Plan)
 	req.PlanName = strings.TrimSpace(req.PlanName)
+	switch req.Provider {
+	case "", store.OVH:
+		req.Provider = store.OVH
+		if !ovh.ValidSubsidiary(req.Subsidiary) {
+			writeError(w, http.StatusBadRequest, "unknown OVH subsidiary")
+			return
+		}
+		if !planCode.MatchString(req.Plan) {
+			writeError(w, http.StatusBadRequest, "enter a plan code, such as vps-2025-model1")
+			return
+		}
+	case store.Hetzner:
+		if !s.hetzner.Configured() {
+			writeError(w, http.StatusBadRequest, hetzner.ErrNoToken.Error())
+			return
+		}
+		if !serverType.MatchString(req.Plan) {
+			writeError(w, http.StatusBadRequest, "enter a server type, such as cx23")
+			return
+		}
+		// Hetzner has no country shops.
+		req.Subsidiary = ""
+	default:
+		writeError(w, http.StatusBadRequest, "unknown provider")
+		return
+	}
 	switch {
-	case !ovh.ValidSubsidiary(req.Subsidiary):
-		writeError(w, http.StatusBadRequest, "unknown OVH subsidiary")
-		return
-	case !planCode.MatchString(req.Plan):
-		writeError(w, http.StatusBadRequest, "enter a plan code, such as vps-2025-model1")
-		return
 	case len(req.PlanName) > maxName || len(req.Note) > maxNote:
 		writeError(w, http.StatusBadRequest, "the plan name or note is too long")
 		return
@@ -121,7 +174,7 @@ func (s *Server) handleVPSAdd(w http.ResponseWriter, r *http.Request) {
 	var v store.VPS
 	if !s.update(w, func(st *store.State) error {
 		p, err := st.AddVPS(store.VPS{
-			Subsidiary: req.Subsidiary, Plan: req.Plan, PlanName: req.PlanName,
+			Provider: req.Provider, Subsidiary: req.Subsidiary, Plan: req.Plan, PlanName: req.PlanName,
 			Datacenters: dcs, Note: strings.TrimSpace(req.Note),
 		}, time.Now().UTC())
 		if err != nil {

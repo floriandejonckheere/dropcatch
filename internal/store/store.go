@@ -141,13 +141,30 @@ func setStatus(status *string, changed **time.Time, history *[]Change, to, detai
 	}
 }
 
-// VPS watches the stock of an OVHcloud VPS plan.
+// VPS providers.
+const (
+	OVH     = "ovh"
+	Hetzner = "hetzner" // Hetzner Cloud
+)
+
+// ProviderName returns the name of a provider as shown to the user.
+func ProviderName(provider string) string {
+	if provider == Hetzner {
+		return "Hetzner Cloud"
+	}
+	return "OVHcloud"
+}
+
+// VPS watches the stock of an OVHcloud VPS plan or a Hetzner Cloud server
+// type.
 type VPS struct {
 	ID         string `json:"id"`
-	Subsidiary string `json:"subsidiary"` // OVH country shop, such as FR
-	Plan       string `json:"plan"`       // plan code, such as vps-2025-model1
+	Provider   string `json:"provider"`
+	Subsidiary string `json:"subsidiary,omitempty"` // OVH country shop, such as FR
+	Plan       string `json:"plan"`                 // plan code, such as vps-2025-model1 or cx23
 	PlanName   string `json:"planName"`
-	// Datacenters to watch (codes such as eu-west-gra); empty for any.
+	// Datacenters (OVH, such as eu-west-gra) or locations (Hetzner, such
+	// as fsn1) to watch; empty for any.
 	Datacenters []string  `json:"datacenters"`
 	Note        string    `json:"note,omitempty"`
 	Paused      bool      `json:"paused,omitempty"`
@@ -326,11 +343,14 @@ func (s State) VPSWatch(id string) *VPS {
 // AddVPS adds a VPS watch with a new ID, unless an identical one exists.
 func (s *State) AddVPS(v VPS, now time.Time) (*VPS, error) {
 	for _, o := range s.VPS {
-		if o.Subsidiary == v.Subsidiary && o.Plan == v.Plan && slices.Equal(o.Datacenters, v.Datacenters) {
+		if o.Provider == v.Provider && o.Subsidiary == v.Subsidiary && o.Plan == v.Plan && slices.Equal(o.Datacenters, v.Datacenters) {
 			return nil, fmt.Errorf("%s in these datacenters is already watched: %w", v.PlanName, ErrExists)
 		}
 	}
 	v.ID, v.Added, v.Status = newID(), now, Unknown
+	if v.Provider == "" {
+		v.Provider = OVH
+	}
 	s.VPS = append(s.VPS, v)
 	return &s.VPS[len(s.VPS)-1], nil
 }
@@ -398,6 +418,12 @@ func Open(dir string) (*Store, error) {
 	}
 	if s.state.Settings.StockInterval == 0 {
 		s.state.Settings.StockInterval = def.StockInterval
+	}
+	// VPS watches were all OVH before Hetzner was added.
+	for i := range s.state.VPS {
+		if s.state.VPS[i].Provider == "" {
+			s.state.VPS[i].Provider = OVH
+		}
 	}
 	// Targets were all Apprise URLs before push was added.
 	for i := range s.state.Targets {
