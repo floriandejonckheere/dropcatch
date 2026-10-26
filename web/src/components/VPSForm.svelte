@@ -45,9 +45,9 @@
   })
 
   // Load the plans of the provider (and OVH subsidiary); when that fails,
-  // the plan code can still be typed in.
+  // the plan code can still be typed in. When editing, they give the
+  // specifications and price of the watched plan.
   $effect(() => {
-    if (editing) return
     const [prov, sub] = [provider, subsidiary]
     const current = () => prov === provider && sub === subsidiary
     catalog = null
@@ -57,7 +57,7 @@
       .then((c) => {
         if (!current()) return
         catalog = c
-        if (!c.plans.some((p) => p.code === untrack(() => plan))) plan = c.plans[0]?.code ?? ''
+        if (!editing && !c.plans.some((p) => p.code === untrack(() => plan))) plan = c.plans[0]?.code ?? ''
       })
       .catch((e) => {
         if (current()) catalogError = (e as Error).message
@@ -139,7 +139,16 @@
 <Modal title={editing ? `Edit ${initial.planName}` : 'Watch a VPS'} {onclose} width="580px" focusField={!editing}>
   <form id="vps-form" onsubmit={save}>
     {#if editing}
-      <p class="fixed"><strong>{initial.planName}</strong> <span class="muted">{planLine({ provider, plan, subsidiary })}</span></p>
+      <div class="fixed">
+        <p><strong>{initial.planName}</strong> <span class="muted">{planLine({ provider, plan, subsidiary })}</span></p>
+        {#if catalog}
+          {@const p = catalog.plans.find((x) => x.code === plan)}
+          <!-- A plan OVH no longer sells is missing from the catalog. -->
+          <p class="hint">{p ? planSummary(p, catalog.currency) : 'No longer in the catalog'}</p>
+        {:else if !catalogError && !noToken}
+          <p class="hint">Loading specifications…</p>
+        {/if}
+      </div>
     {:else}
       <div class="providers" role="radiogroup" aria-label="Provider">
         {#each ['ovh', 'hetzner'] as const as p (p)}
@@ -311,6 +320,12 @@
   }
 
   .fixed {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .fixed p {
     margin: 0;
   }
 
