@@ -69,7 +69,7 @@ It follows the structure of [Wavr](https://github.com/floriandejonckheere/wavr):
 ### 3.4 Scheduling
 
 - One goroutine checks domains and VPS watches one at a time, with a two-second pause between queries. Registries and OVH rate-limit per client, and watching a few domains and plans does not need parallelism.
-- Both share one queue, keyed by the domain name or `vps:<id>` (domain names cannot contain a colon). An item is due when its last check is older than the interval; new ones are due immediately. A VPS watch that is available uses the in-stock interval (a setting, 2 minutes by default, never longer than the regular interval) until a check finds it out of stock: restocks often last minutes, and the shorter interval tells how long they last. Only the watches in stock are checked this often, so the extra queries to OVH stay few. "Check now" and "Check all" put keys in a queue that goes first. The loop sleeps until the next item is due, and wakes early when domains, VPS watches or settings change.
+- Both share one queue, keyed by the domain name or `vps:<id>` (domain names cannot contain a colon). An item is due when its last check is older than its interval; new ones are due immediately. Domains and VPS have separate interval settings (12 hours and 15 minutes by default, 5 minutes to 7 days for domains, 1 minute to 7 days for VPS), since registrations change over days and restocks over minutes. Each domain or VPS can replace it with its own (`interval`, 0 for the setting), such as a domain in its deletion period. A VPS watch that is available uses the in-stock interval (a setting, 2 minutes by default, never longer than its usual interval) until a check finds it out of stock: restocks often last minutes, and the shorter interval tells how long they last. Only the watches in stock are checked this often, so the extra queries to OVH stay few. "Check now" and "Check all" put keys in a queue that goes first. The loop sleeps until the next item is due, and wakes early when domains, VPS watches or settings change.
 - Each query has a timeout (a setting, 20 seconds by default).
 
 ### 3.5 Status changes and notifications
@@ -130,8 +130,8 @@ All endpoints except `config`, `login` and `logout` require a session when a pas
 | `POST /api/login`, `POST /api/logout` | Session cookie |
 | `GET /api/state` | Domains, VPS watches, targets, settings and the keys being checked |
 | `GET /api/events` | SSE: `domain`, `domains`, `removed`, `vps`, `vpsRemoved`, `targets`, `settings`, `checking` |
-| `POST /api/domains` | Add domains: `{names, note}`; names are separated by spaces, commas or newlines. Returns `{added, failed}` |
-| `PATCH /api/domains/{name}` | Change `note` or `paused` |
+| `POST /api/domains` | Add domains: `{names, note, interval}` (`interval` optional, in minutes); names are separated by spaces, commas or newlines. Returns `{added, failed}` |
+| `PATCH /api/domains/{name}` | Change `note`, `paused` or `interval` (minutes; 0 for the setting) |
 | `DELETE /api/domains/{name}` | Stop watching a domain |
 | `POST /api/domains/{name}/check` | Check a domain now (queued; the result arrives as an event) |
 | `POST /api/check` | Check all active domains and VPS watches now |
@@ -139,22 +139,22 @@ All endpoints except `config`, `login` and `logout` require a session when a pas
 | `GET /api/hetzner/plans` | Hetzner Cloud server types: `{currency, plans}`, with `cpuType` and `architecture` |
 | `GET /api/hetzner/stock?plan=` | Locations offering a server type, with their region and current availability |
 | `GET /api/ovh/stock?subsidiary=&plan=` | Datacenters offering a plan, with their region and current stock |
-| `POST /api/vps` | Watch a VPS: `{provider, subsidiary, plan, planName, datacenters, note}`; `provider` is `ovh` (default) or `hetzner` (no subsidiary, `datacenters` are locations); `datacenters` empty for any. `409` for an identical watch |
-| `PATCH /api/vps/{id}` | Change `datacenters`, `note` or `paused` |
+| `POST /api/vps` | Watch a VPS: `{provider, subsidiary, plan, planName, datacenters, note, interval}`; `provider` is `ovh` (default) or `hetzner` (no subsidiary, `datacenters` are locations); `datacenters` empty for any. `409` for an identical watch |
+| `PATCH /api/vps/{id}` | Change `datacenters`, `note`, `paused` or `interval` (minutes; 0 for the setting) |
 | `DELETE /api/vps/{id}` | Stop watching |
 | `POST /api/vps/{id}/check` | Check now (queued; the result arrives as an event) |
 | `POST /api/targets` | Add a target: `{name, url, enabled}`, or `{name, type: "push", push: {endpoint, p256dh, auth}}` for this browser (replaces its earlier target) |
 | `PATCH /api/targets/{id}` | Change `name`, `url` (not for push targets) or `enabled` |
 | `DELETE /api/targets/{id}` | Remove a target |
 | `POST /api/targets/{id}/test` | Send a test notification; `502` with Apprise's error when it fails |
-| `PATCH /api/settings` | Change `interval` (minutes), `stockInterval` (minutes, for VPS in stock), `timeout` (seconds) or `notifyChanges` |
+| `PATCH /api/settings` | Change `interval` (minutes, for domains), `vpsInterval` (minutes), `stockInterval` (minutes, for VPS in stock), `timeout` (seconds) or `notifyChanges` |
 
 ## 5. Decisions
 
 - **No database.** The state of one user fits in a small JSON file, which is easy to back up and inspect.
 - **RDAP first, WHOIS as fallback.** RDAP is structured and standard; WHOIS output differs per registry and is only parsed for availability, dates and the registrar.
 - **Sequential checks.** Simpler, and gentle on registries and OVH; a few dozen domains take about a minute per round.
-- **One schedule for domains and VPS.** Same interval, notification targets and queue; a VPS in stock is checked at a shorter interval until it sells out, rather than all VPS at a separate interval, which would query OVH often for plans that stay out of stock for weeks.
+- **One schedule for domains and VPS, with separate intervals.** They share the queue and notification targets. Domains need a few checks a day and VPS several an hour, so each has its own interval setting, and each item can override it. A VPS in stock is checked at a shorter interval still, until it sells out.
 - **OVH's public API, without credentials.** Stock and catalog are public; an OVH API key would add setup for nothing.
 - **A token for Hetzner, from the environment.** Hetzner has no public availability endpoint. The token is a deployment secret like the password, so it is a flag or environment variable rather than a setting in the UI and the state file; read-only tokens are enough, as Dropcatch never changes anything in the project.
 - **Notify on transitions only.** An available domain is announced once, not on every check.

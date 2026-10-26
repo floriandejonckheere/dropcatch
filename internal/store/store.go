@@ -7,6 +7,7 @@
 package store
 
 import (
+	"cmp"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -52,10 +53,15 @@ type State struct {
 }
 
 type Settings struct {
-	// Interval between checks of each domain or VPS, in minutes.
+	// Interval between checks of each domain, in minutes. Registrations
+	// change slowly, so a few checks a day are enough.
 	Interval int `json:"interval"`
-	// StockInterval replaces Interval for a VPS while it is in stock, so
-	// that the end of the stock is seen soon after it happens, in minutes.
+	// VPSInterval is the interval between checks of each VPS, in minutes.
+	// Restocks can sell out within the hour, so it is much shorter.
+	VPSInterval int `json:"vpsInterval"`
+	// StockInterval replaces the interval of a VPS while it is in stock
+	// (when shorter), so that the end of the stock is seen soon after it
+	// happens, in minutes.
 	StockInterval int `json:"stockInterval"`
 	// Timeout of one registry query, in seconds.
 	Timeout int `json:"timeout"`
@@ -68,6 +74,8 @@ type Settings struct {
 const (
 	MinInterval      = 5
 	MaxInterval      = 7 * 24 * 60
+	MinVPSInterval   = 1
+	MaxVPSInterval   = MaxInterval
 	MinStockInterval = 1
 	MaxStockInterval = 60
 	MinTimeout       = 5
@@ -75,12 +83,15 @@ const (
 )
 
 func DefaultSettings() Settings {
-	return Settings{Interval: 60, StockInterval: 2, Timeout: 20, NotifyChanges: true}
+	return Settings{Interval: 12 * 60, VPSInterval: 15, StockInterval: 2, Timeout: 20, NotifyChanges: true}
 }
 
 func (s Settings) Validate() error {
-	if s.Interval < MinInterval || s.Interval > MaxInterval {
-		return fmt.Errorf("the check interval must be between %d minutes and %d days", MinInterval, MaxInterval/24/60)
+	if err := ValidateDomainInterval(s.Interval); err != nil {
+		return err
+	}
+	if err := ValidateVPSInterval(s.VPSInterval); err != nil {
+		return err
 	}
 	if s.StockInterval < MinStockInterval || s.StockInterval > MaxStockInterval {
 		return fmt.Errorf("the interval while in stock must be between %d and %d minutes", MinStockInterval, MaxStockInterval)
@@ -91,11 +102,46 @@ func (s Settings) Validate() error {
 	return nil
 }
 
+// ValidateDomainInterval checks a domain check interval in minutes.
+func ValidateDomainInterval(minutes int) error {
+	if minutes < MinInterval || minutes > MaxInterval {
+		return fmt.Errorf("the domain check interval must be between %d minutes and %d days", MinInterval, MaxInterval/24/60)
+	}
+	return nil
+}
+
+// ValidateVPSInterval checks a VPS check interval in minutes.
+func ValidateVPSInterval(minutes int) error {
+	if minutes < MinVPSInterval || minutes > MaxVPSInterval {
+		return fmt.Errorf("the VPS check interval must be between %d minute and %d days", MinVPSInterval, MaxVPSInterval/24/60)
+	}
+	return nil
+}
+
+// DomainEvery returns how often d is checked: its own interval, or the
+// one of all domains.
+func (s Settings) DomainEvery(d Domain) time.Duration {
+	return time.Duration(cmp.Or(d.Interval, s.Interval)) * time.Minute
+}
+
+// VPSEvery returns how often v is checked: its own interval or the one of
+// all VPS, and while it is in stock, at most the in-stock interval.
+func (s Settings) VPSEvery(v VPS) time.Duration {
+	m := cmp.Or(v.Interval, s.VPSInterval)
+	if v.Status == Available {
+		m = min(m, s.StockInterval)
+	}
+	return time.Duration(m) * time.Minute
+}
+
 type Domain struct {
-	Name   string    `json:"name"` // lowercase ASCII (punycode)
-	Note   string    `json:"note,omitempty"`
-	Paused bool      `json:"paused,omitempty"`
-	Added  time.Time `json:"added"`
+	Name   string `json:"name"` // lowercase ASCII (punycode)
+	Note   string `json:"note,omitempty"`
+	Paused bool   `json:"paused,omitempty"`
+	// Interval replaces Settings.Interval for this domain, in minutes;
+	// 0 uses the setting.
+	Interval int       `json:"interval,omitempty"`
+	Added    time.Time `json:"added"`
 
 	// Last successful check.
 	Status    string     `json:"status"`
@@ -165,10 +211,13 @@ type VPS struct {
 	PlanName   string `json:"planName"`
 	// Datacenters (OVH, such as eu-west-gra) or locations (Hetzner, such
 	// as fsn1) to watch; empty for any.
-	Datacenters []string  `json:"datacenters"`
-	Note        string    `json:"note,omitempty"`
-	Paused      bool      `json:"paused,omitempty"`
-	Added       time.Time `json:"added"`
+	Datacenters []string `json:"datacenters"`
+	Note        string   `json:"note,omitempty"`
+	Paused      bool     `json:"paused,omitempty"`
+	// Interval replaces Settings.VPSInterval for this watch, in minutes;
+	// 0 uses the setting.
+	Interval int       `json:"interval,omitempty"`
+	Added    time.Time `json:"added"`
 
 	// Last successful check: Available when a watched datacenter has stock.
 	Status  string     `json:"status"`
@@ -408,11 +457,18 @@ func Open(dir string) (*Store, error) {
 	case err != nil:
 		return nil, err
 	}
+	// The intervals are filled in below, depending on which the file has.
+	s.state.Settings.Interval, s.state.Settings.VPSInterval = 0, 0
 	if err := json.Unmarshal(data, &s.state); err != nil {
 		return nil, fmt.Errorf("reading %s: %w", s.file, err)
 	}
 	// Fill in settings added after the file was written.
 	def := DefaultSettings()
+	// Domains and VPS shared one interval before VPSInterval existed:
+	// keep checking VPS as often as before.
+	if s.state.Settings.VPSInterval == 0 {
+		s.state.Settings.VPSInterval = cmp.Or(s.state.Settings.Interval, def.VPSInterval)
+	}
 	if s.state.Settings.Interval == 0 {
 		s.state.Settings.Interval = def.Interval
 	}

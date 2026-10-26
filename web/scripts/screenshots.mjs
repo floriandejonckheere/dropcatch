@@ -29,8 +29,10 @@ await api('POST', 'domains', { names: 'free-coffee.shop dropshipping.dev example
 await api('POST', 'domains', { names: 'free-lunch.app', note: 'For the side project' })
 await api('POST', 'domains', { names: 'acme.net', note: 'Ask the owner first' })
 await api('PATCH', 'domains/acme.net', { paused: true })
+// A domain about to drop is checked more often than the others.
+await api('PATCH', 'domains/dropshipping.dev', { interval: 60 })
 const eu = ['eu-central-waw', 'eu-south-mil', 'eu-west-gra', 'eu-west-lim', 'eu-west-rbx', 'eu-west-sbg']
-await api('POST', 'vps', { subsidiary: 'FR', plan: 'vps-2025-model1', planName: 'VPS-1', datacenters: eu, note: 'Cheapest one' })
+await api('POST', 'vps', { subsidiary: 'FR', plan: 'vps-2025-model1', planName: 'VPS-1', datacenters: eu, note: 'Cheapest one', interval: 5 })
 await api('POST', 'vps', { subsidiary: 'FR', plan: 'vps-2025-model2', planName: 'VPS-2', datacenters: ['ca-east-bhs'] })
 await api('POST', 'vps', { subsidiary: 'FR', plan: 'vps-2025-model4', planName: 'VPS-4', datacenters: ['eu-west-gra', 'eu-west-rbx'] })
 await api('POST', 'vps', { provider: 'hetzner', plan: 'cax11', planName: 'CAX11', datacenters: ['fsn1', 'hel1', 'nbg1'], note: 'Arm build runner' })

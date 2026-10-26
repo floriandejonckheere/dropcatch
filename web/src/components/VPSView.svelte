@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { VPS } from '../lib/api'
-  import { relative } from '../lib/format'
+  import { minutes, relative, vpsEvery } from '../lib/format'
   import { app } from '../lib/state.svelte'
   import { city, planLine, place, vpsActions } from '../lib/vps'
   import Icon from './Icon.svelte'
@@ -91,7 +91,7 @@
             {:else if v.error}
               <span class="error" title={v.error}><Icon name="alert" size={14} />Check failed</span>
             {:else if v.checked}
-              <span class="muted" title={new Date(v.checked).toLocaleString()}>{relative(v.checked, now)}</span>
+              <span class="muted" title={`${new Date(v.checked).toLocaleString()}, checked every ${minutes(vpsEvery(v, app.settings))}`}>{relative(v.checked, now)}</span>
             {/if}
           </div>
           <div class="actions">

@@ -4,27 +4,20 @@
   import { session } from '../lib/session.svelte'
   import { app } from '../lib/state.svelte'
   import { toasts } from '../lib/toasts.svelte'
+  import IntervalInput from './IntervalInput.svelte'
 
-  type Unit = 1 | 60 | 1440
-  const units: { value: Unit; label: string }[] = [
-    { value: 1, label: 'minutes' },
-    { value: 60, label: 'hours' },
-    { value: 1440, label: 'days' },
-  ]
-
-  let amount = $state(1)
-  let unit = $state<Unit>(60)
+  let interval = $state(720)
+  let vpsInterval = $state(15)
   let stockInterval = $state(2)
   let timeout = $state(20)
   let notifyChanges = $state(true)
   let busy = $state(false)
 
-  // Show the saved settings, in the largest unit that fits.
+  // Show the saved settings.
   function reset() {
     const s = app.settings
-    const u = s.interval % 1440 === 0 ? 1440 : s.interval % 60 === 0 ? 60 : 1
-    unit = u
-    amount = s.interval / u
+    interval = s.interval
+    vpsInterval = s.vpsInterval
     stockInterval = s.stockInterval
     timeout = s.timeout
     notifyChanges = s.notifyChanges
@@ -34,20 +27,22 @@
     reset()
   })
 
-  const limits = $derived(session.config?.limits ?? { minInterval: 5, maxInterval: 10080, minStockInterval: 1, maxStockInterval: 60, minTimeout: 5, maxTimeout: 120 })
-  const interval = $derived(Math.round(amount * unit))
+  const limits = $derived(session.config?.limits ?? { minInterval: 5, maxInterval: 10080, minVPSInterval: 1, maxVPSInterval: 10080, minStockInterval: 1, maxStockInterval: 60, minTimeout: 5, maxTimeout: 120 })
   const dirty = $derived(
     interval !== app.settings.interval ||
+      vpsInterval !== app.settings.vpsInterval ||
       stockInterval !== app.settings.stockInterval ||
       timeout !== app.settings.timeout || notifyChanges !== app.settings.notifyChanges,
   )
-  const checksPerDay = $derived(Math.round((1440 / interval) * app.domains.filter((d) => !d.paused).length))
+  // Domains and VPS with their own interval are counted at it.
+  const domainChecks = $derived(Math.round(app.domains.filter((d) => !d.paused).reduce((n, d) => n + 1440 / (d.interval || interval), 0)))
+  const vpsChecks = $derived(Math.round(app.vps.filter((v) => !v.paused).reduce((n, v) => n + 1440 / (v.interval || vpsInterval), 0)))
 
   async function save(e: SubmitEvent) {
     e.preventDefault()
     busy = true
     try {
-      app.settings = await api.saveSettings({ interval, stockInterval, timeout, notifyChanges })
+      app.settings = await api.saveSettings({ interval, vpsInterval, stockInterval, timeout, notifyChanges })
       toasts.show('Settings saved', { kind: 'success' })
     } catch (err) {
       toasts.error(err)
@@ -62,17 +57,21 @@
 
   <form class="card" onsubmit={save}>
     <div class="group">
-      <span class="label" id="interval-label">Check every domain every</span>
-      <div class="row" role="group" aria-labelledby="interval-label">
-        <input class="input amount" type="number" min="1" step="1" bind:value={amount} aria-label="Interval" required />
-        <select class="input" bind:value={unit} aria-label="Unit">
-          {#each units as u (u.value)}<option value={u.value}>{u.label}</option>{/each}
-        </select>
-      </div>
+      <span class="label">Check each domain every</span>
+      <IntervalInput bind:value={interval} min={limits.minInterval} max={limits.maxInterval} label="Domain check interval" />
       <p class="hint">
-        Between {minutes(limits.minInterval)} and {minutes(limits.maxInterval)}.
-        {#if checksPerDay > 0}That is about {checksPerDay.toLocaleString()} registry queries a day.{/if}
+        Between {minutes(limits.minInterval)} and {minutes(limits.maxInterval)}. Registrations change slowly: a few checks a day are enough.
+        {#if domainChecks > 0}That is about {domainChecks.toLocaleString()} registry queries a day.{/if}
         Registries limit how often they answer; if checks fail with “rate limited”, check less often.
+      </p>
+    </div>
+
+    <div class="group">
+      <span class="label">Check each VPS every</span>
+      <IntervalInput bind:value={vpsInterval} min={limits.minVPSInterval} max={limits.maxVPSInterval} label="VPS check interval" />
+      <p class="hint">
+        Between {minutes(limits.minVPSInterval)} and {minutes(limits.maxVPSInterval)}. Restocks can sell out within the hour.
+        {#if vpsChecks > 0}That is about {vpsChecks.toLocaleString()} provider queries a day.{/if}
       </p>
     </div>
 
@@ -92,7 +91,7 @@
         <span class="unit">minutes</span>
       </div>
       <p class="hint">
-        Until it sells out again, so that its stock history shows when that happened. Between {minutes(limits.minStockInterval)} and
+        Until it sells out again, so that its stock history shows when that happened; only when shorter than its usual interval. Between {minutes(limits.minStockInterval)} and
         {minutes(limits.maxStockInterval)}.
       </p>
     </div>
@@ -172,10 +171,6 @@
     align-self: center;
     font-size: 14px;
     color: var(--text-2);
-  }
-
-  select.input {
-    width: auto;
   }
 
   .hint {

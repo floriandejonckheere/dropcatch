@@ -403,3 +403,60 @@ func TestVPS(t *testing.T) {
 		t.Fatalf("next = %q", key)
 	}
 }
+
+func TestIntervals(t *testing.T) {
+	m, st, _, _ := setup(t, "slow.com", "own.com")
+	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	m.now = func() time.Time { return now }
+	at := func(ago time.Duration) *time.Time { t := now.Add(-ago); return &t }
+	var vps, ownVPS, inStock string
+	_ = st.Update(func(s *store.State) error {
+		s.Settings.Interval, s.Settings.VPSInterval, s.Settings.StockInterval = 12*60, 15, 2
+		s.Domain("slow.com").Checked = at(11 * time.Hour)
+		s.Domain("own.com").Interval = 60
+		s.Domain("own.com").Checked = at(50 * time.Minute)
+		a, _ := s.AddVPS(store.VPS{Provider: store.OVH, Subsidiary: "FR", Plan: "vps-1", PlanName: "VPS-1"}, now)
+		a.Checked = at(9 * time.Minute)
+		b, _ := s.AddVPS(store.VPS{Provider: store.OVH, Subsidiary: "FR", Plan: "vps-2", PlanName: "VPS-2", Interval: 120}, now)
+		b.Checked = at(115 * time.Minute)
+		// An own interval longer than the in-stock one does not slow down
+		// the checks while in stock.
+		c, _ := s.AddVPS(store.VPS{Provider: store.OVH, Subsidiary: "FR", Plan: "vps-3", PlanName: "VPS-3", Interval: 120}, now)
+		c.Status, c.Checked = store.Available, at(time.Minute)
+		vps, ownVPS, inStock = a.ID, b.ID, c.ID
+		return nil
+	})
+
+	// Due in: slow.com 60m, own.com 10m, VPS-1 6m, VPS-2 5m, VPS-3 1m.
+	for _, want := range []struct {
+		key  string
+		wait time.Duration
+	}{
+		{VPSKey(inStock), time.Minute},
+		{VPSKey(ownVPS), 5 * time.Minute},
+		{VPSKey(vps), 6 * time.Minute},
+		{"own.com", 10 * time.Minute},
+		{"slow.com", time.Hour},
+	} {
+		if key, wait := m.next(); key != "" || wait != want.wait {
+			t.Fatalf("next = %q, %v; want %s in %v", key, wait, want.key, want.wait)
+		}
+		now = now.Add(want.wait)
+		key, _ := m.next()
+		if key != want.key {
+			t.Fatalf("next = %q, want %q", key, want.key)
+		}
+		// Pretend it was checked, and rewind the clock: the others are due
+		// at the same times.
+		_ = st.Update(func(s *store.State) error {
+			never := now.Add(100 * 24 * time.Hour)
+			if id, ok := strings.CutPrefix(key, "vps:"); ok {
+				s.VPSWatch(id).Checked = &never
+			} else {
+				s.Domain(key).Checked = &never
+			}
+			return nil
+		})
+		now = now.Add(-want.wait)
+	}
+}

@@ -28,17 +28,34 @@ func views(ds []store.Domain) []domainView {
 
 const maxNote = 500
 
+// ownInterval validates the interval of one domain or VPS, in minutes; 0
+// uses the setting for all of them.
+func ownInterval(minutes int, validate func(int) error) error {
+	if minutes == 0 {
+		return nil
+	}
+	if err := validate(minutes); err != nil {
+		return badRequest{err}
+	}
+	return nil
+}
+
 // handleDomainAdd adds one or more domains, separated by whitespace or commas.
 func (s *Server) handleDomainAdd(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Names string `json:"names"`
-		Note  string `json:"note"`
+		Names    string `json:"names"`
+		Note     string `json:"note"`
+		Interval int    `json:"interval"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
 	if len(req.Note) > maxNote {
 		writeError(w, http.StatusBadRequest, "the note is too long")
+		return
+	}
+	if err := ownInterval(req.Interval, store.ValidateDomainInterval); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	type failure struct {
@@ -69,6 +86,7 @@ func (s *Server) handleDomainAdd(w http.ResponseWriter, r *http.Request) {
 				failed = append(failed, failure{name, "already monitored"})
 				continue
 			}
+			d.Interval = req.Interval
 			added = append(added, view(*d))
 		}
 		return nil
@@ -88,8 +106,9 @@ func (s *Server) handleDomainAdd(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDomainEdit(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Note   *string `json:"note"`
-		Paused *bool   `json:"paused"`
+		Note     *string `json:"note"`
+		Paused   *bool   `json:"paused"`
+		Interval *int    `json:"interval"` // 0 for the setting
 	}
 	if !decode(w, r, &req) {
 		return
@@ -108,6 +127,12 @@ func (s *Server) handleDomainEdit(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Paused != nil {
 			p.Paused = *req.Paused
+		}
+		if req.Interval != nil {
+			if err := ownInterval(*req.Interval, store.ValidateDomainInterval); err != nil {
+				return err
+			}
+			p.Interval = *req.Interval
 		}
 		d = *p
 		return nil
@@ -146,6 +171,7 @@ func (s *Server) handleCheckAll(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Interval      *int  `json:"interval"`
+		VPSInterval   *int  `json:"vpsInterval"`
 		StockInterval *int  `json:"stockInterval"`
 		Timeout       *int  `json:"timeout"`
 		NotifyChanges *bool `json:"notifyChanges"`
@@ -157,6 +183,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	if !s.update(w, func(st *store.State) error {
 		if req.Interval != nil {
 			st.Settings.Interval = *req.Interval
+		}
+		if req.VPSInterval != nil {
+			st.Settings.VPSInterval = *req.VPSInterval
 		}
 		if req.StockInterval != nil {
 			st.Settings.StockInterval = *req.StockInterval

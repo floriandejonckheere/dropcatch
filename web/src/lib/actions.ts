@@ -41,16 +41,6 @@ export const actions = {
     }
   },
 
-  async editNote(d: Domain) {
-    const note = await dialogs.prompt({ title: `Note for ${d.display}`, label: 'Note', value: d.note ?? '', confirm: 'Save', multiline: true })
-    if (note === null) return
-    try {
-      app.upsert(await api.editDomain(d.name, { note }))
-    } catch (e) {
-      toasts.error(e)
-    }
-  },
-
   async setPaused(d: Domain, paused: boolean) {
     try {
       app.upsert(await api.editDomain(d.name, { paused }))

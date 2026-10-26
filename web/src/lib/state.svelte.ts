@@ -6,7 +6,7 @@ class AppState {
   domains = $state<Domain[]>([])
   vps = $state<VPS[]>([])
   targets = $state<Target[]>([])
-  settings = $state<Settings>({ interval: 60, stockInterval: 2, timeout: 20, notifyChanges: true })
+  settings = $state<Settings>({ interval: 720, vpsInterval: 15, stockInterval: 2, timeout: 20, notifyChanges: true })
   checking = $state<string[]>([])
   loaded = $state(false)
   connected = $state(false)

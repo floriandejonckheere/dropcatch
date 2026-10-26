@@ -1,4 +1,4 @@
-import type { Region, Status } from './api'
+import type { Region, Settings, Status } from './api'
 
 export const statusLabel: Record<Status, string> = {
   unknown: 'Not checked',
@@ -47,6 +47,17 @@ export function dateTime(iso: string | undefined): string {
 /** Days until iso (negative when past). */
 export function daysUntil(iso: string, now = Date.now()): number {
   return Math.floor((new Date(iso).getTime() - now) / 86400000)
+}
+
+/** How often d is checked, in minutes. */
+export function domainEvery(d: { interval?: number }, s: Settings): number {
+  return d.interval || s.interval
+}
+
+/** How often v is checked, in minutes: while in stock, at most the in-stock interval. */
+export function vpsEvery(v: { interval?: number; status: Status }, s: Settings): number {
+  const m = v.interval || s.vpsInterval
+  return v.status === 'available' ? Math.min(m, s.stockInterval) : m
 }
 
 /** "1 hour", "15 minutes", "2 days". */

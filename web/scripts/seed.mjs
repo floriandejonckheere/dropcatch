@@ -33,7 +33,7 @@ const periods = [
 ].map(([code, start, end]) => ({ code, name: names[code], start: ago(start), ...(end ? { end: ago(end) } : {}) }))
 
 const state = {
-  settings: { interval: 60, stockInterval: 2, timeout: 20, notifyChanges: true },
+  settings: { interval: 720, vpsInterval: 15, stockInterval: 2, timeout: 20, notifyChanges: true },
   domains: [],
   vps: [
     {

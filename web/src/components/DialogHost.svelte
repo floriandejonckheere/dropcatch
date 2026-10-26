@@ -29,11 +29,7 @@
     <form id="prompt-form" onsubmit={(e) => (e.preventDefault(), d.resolve(value))}>
       <label class="field">
         <span>{d.label}</span>
-        {#if d.multiline}
-          <textarea class="input" rows="3" bind:value></textarea>
-        {:else}
-          <input class="input" bind:value autocomplete="off" />
-        {/if}
+        <input class="input" bind:value autocomplete="off" />
       </label>
     </form>
     {#snippet footer()}

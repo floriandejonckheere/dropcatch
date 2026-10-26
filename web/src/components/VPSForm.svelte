@@ -1,12 +1,13 @@
 <script lang="ts">
   import { untrack } from 'svelte'
   import { api, type Catalog, type Plan, type Provider, type Region, type Stock, type VPS } from '../lib/api'
-  import { regionLabel } from '../lib/format'
+  import { minutes, regionLabel } from '../lib/format'
   import { session } from '../lib/session.svelte'
   import { app } from '../lib/state.svelte'
   import { toasts } from '../lib/toasts.svelte'
   import { family, place, planLine, planSummary, providerName } from '../lib/vps'
   import Modal from './Modal.svelte'
+  import OwnInterval from './OwnInterval.svelte'
 
   let { watch, onclose }: { watch: Partial<VPS>; onclose: () => void } = $props()
 
@@ -18,6 +19,7 @@
   let subsidiary = $state(initial.subsidiary || 'FR')
   let plan = $state(initial.plan ?? '')
   let note = $state(initial.note ?? '')
+  let interval = $state(initial.interval ?? 0)
   let any = $state(!initial.datacenters?.length)
   let picked = $state<string[]>(initial.datacenters ?? [])
 
@@ -119,8 +121,8 @@
     const datacenters = any ? [] : picked
     try {
       const v = editing
-        ? await api.editVPS(initial.id!, { datacenters, note })
-        : await api.addVPS({ provider, subsidiary: hetzner ? undefined : subsidiary, plan: plan.trim(), planName, datacenters, note })
+        ? await api.editVPS(initial.id!, { datacenters, note, interval })
+        : await api.addVPS({ provider, subsidiary: hetzner ? undefined : subsidiary, plan: plan.trim(), planName, datacenters, note, interval })
       // The first check can finish, and arrive as an event, before this
       // response: keep that newer version.
       if (editing || !app.vps.some((x) => x.id === v.id)) app.upsertVPS(v)
@@ -245,6 +247,13 @@
         <span>Note</span>
         <input class="input" bind:value={note} placeholder="Optional" maxlength="500" />
       </label>
+      <OwnInterval
+        bind:value={interval}
+        fallback={app.settings.vpsInterval}
+        min={session.config?.limits.minVPSInterval ?? 1}
+        max={session.config?.limits.maxVPSInterval ?? 10080}
+        note={`While in stock, it is checked every ${minutes(app.settings.stockInterval)} if that is shorter.`}
+      />
     {/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}
   </form>

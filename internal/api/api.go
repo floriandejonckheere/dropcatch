@@ -123,6 +123,8 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"limits": map[string]int{
 			"minInterval":      store.MinInterval,
 			"maxInterval":      store.MaxInterval,
+			"minVPSInterval":   store.MinVPSInterval,
+			"maxVPSInterval":   store.MaxVPSInterval,
 			"minStockInterval": store.MinStockInterval,
 			"maxStockInterval": store.MaxStockInterval,
 			"minTimeout":       store.MinTimeout,

@@ -1,13 +1,13 @@
 <script lang="ts">
   import type { Domain } from '../lib/api'
   import { actions } from '../lib/actions'
-  import { date, dateTime, relative, statusLabel } from '../lib/format'
+  import { date, dateTime, domainEvery, minutes, relative, statusLabel } from '../lib/format'
   import { app } from '../lib/state.svelte'
   import Icon from './Icon.svelte'
   import Modal from './Modal.svelte'
   import StatusBadge from './StatusBadge.svelte'
 
-  let { domain: d, now, onclose }: { domain: Domain; now: number; onclose: () => void } = $props()
+  let { domain: d, now, onclose, onedit }: { domain: Domain; now: number; onclose: () => void; onedit: () => void } = $props()
 
   const checking = $derived(app.checking.includes(d.name))
 
@@ -49,6 +49,8 @@
     {/if}
     <dt>Last checked</dt>
     <dd>{checking ? 'Checking now…' : d.checked ? dateTime(d.checked) : 'Never'}</dd>
+    <dt>Checked every</dt>
+    <dd>{minutes(domainEvery(d, app.settings))} <span class="muted">({d.interval ? 'own interval' : 'default'})</span></dd>
     <dt>Watching since</dt>
     <dd>{date(d.added)}</dd>
     {#if d.note}
@@ -72,6 +74,7 @@
   {#snippet footer()}
     <button class="pill" onclick={remove} aria-label="Remove"><Icon name="trash" size={16} /><span class="wide">Remove</span></button>
     <span class="spacer"></span>
+    <button class="pill" onclick={onedit} aria-label="Edit"><Icon name="rename" size={14} /><span class="wide">Edit</span></button>
     <button class="pill" onclick={() => actions.setPaused(d, !d.paused)}>
       <Icon name={d.paused ? 'play' : 'pause'} size={14} />{d.paused ? 'Resume' : 'Pause'}
     </button>

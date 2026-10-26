@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { VPS } from '../lib/api'
-  import { date, dateTime, regionLabel, relative, statusLabel } from '../lib/format'
+  import { date, dateTime, minutes, regionLabel, relative, statusLabel, vpsEvery } from '../lib/format'
   import { app } from '../lib/state.svelte'
   import { orderUrl, planLine, place, places, providerName, vpsActions } from '../lib/vps'
   import Icon from './Icon.svelte'
@@ -36,6 +36,13 @@
     <dd>{v.datacenters.length ? places(v.provider, v.datacenters.length) : `Any ${place(v.provider)}`}</dd>
     <dt>Last checked</dt>
     <dd>{checking ? 'Checking now…' : v.checked ? `${dateTime(v.checked)} (${relative(v.checked, now)})` : 'Never'}</dd>
+    <dt>Checked every</dt>
+    <dd>
+      {minutes(vpsEvery(v, app.settings))}
+      <span class="muted">({v.status === 'available' && vpsEvery(v, app.settings) < (v.interval || app.settings.vpsInterval)
+          ? `while in stock, otherwise ${minutes(v.interval || app.settings.vpsInterval)}`
+          : v.interval ? 'own interval' : 'default'})</span>
+    </dd>
     <dt>Watching since</dt>
     <dd>{date(v.added)}</dd>
     {#if v.note}

@@ -1,9 +1,10 @@
 <script lang="ts">
   import type { Domain, Status } from '../lib/api'
   import { actions } from '../lib/actions'
-  import { daysUntil, minutes, relative } from '../lib/format'
+  import { daysUntil, domainEvery, minutes, relative } from '../lib/format'
   import { app } from '../lib/state.svelte'
   import DomainDetails from './DomainDetails.svelte'
+  import DomainForm from './DomainForm.svelte'
   import Icon from './Icon.svelte'
   import { menu } from './Menu.svelte'
   import StatusBadge from './StatusBadge.svelte'
@@ -15,6 +16,7 @@
   let filter = $state<Status | 'all'>('all')
   let query = $state('')
   let details = $state<string | null>(null)
+  let editing = $state<Domain | null>(null)
 
   const counts = $derived(
     app.domains.reduce(
@@ -56,7 +58,7 @@
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
     menu.show({ clientX: r.right - 200, clientY: r.bottom + 4 }, [
       { label: 'Details', icon: 'info', run: () => (details = d.name) },
-      { label: 'Edit note', icon: 'rename', run: () => actions.editNote(d) },
+      { label: 'Edit', icon: 'rename', run: () => (editing = d) },
       d.paused
         ? { label: 'Resume monitoring', icon: 'play', run: () => actions.setPaused(d, false) }
         : { label: 'Pause monitoring', icon: 'pause', run: () => actions.setPaused(d, true) },
@@ -140,7 +142,7 @@
             {:else if d.error}
               <span class="error" title={d.error}><Icon name="alert" size={14} />Check failed</span>
             {:else if d.checked}
-              <span class="muted" title={new Date(d.checked).toLocaleString()}>{relative(d.checked, now)}</span>
+              <span class="muted" title={`${new Date(d.checked).toLocaleString()}, checked every ${minutes(domainEvery(d, app.settings))}`}>{relative(d.checked, now)}</span>
             {/if}
           </div>
           <div class="actions">
@@ -158,13 +160,16 @@
     <div class="empty-state">
       <Icon name="globe" size={40} />
       <h2>Watch a domain</h2>
-      <p>Add the domains you want. Dropcatch asks their registry every {minutes(app.settings.interval)} and lets you know when one becomes available.</p>
+      <p>Add the domains you want. Dropcatch asks their registry every {minutes(app.settings.interval)} (or more often for those about to drop) and lets you know when one becomes available.</p>
     </div>
   {/if}
 </section>
 
 {#if selected}
-  <DomainDetails domain={selected} {now} onclose={() => (details = null)} />
+  <DomainDetails domain={selected} {now} onclose={() => (details = null)} onedit={() => ((editing = selected), (details = null))} />
+{/if}
+{#if editing}
+  <DomainForm domain={editing} onclose={() => (editing = null)} />
 {/if}
 
 <style>

@@ -13,6 +13,8 @@ export interface Domain {
   /** Unicode form of an internationalised name. */
   display: string
   note?: string
+  /** Own check interval in minutes; absent for the setting. */
+  interval?: number
   paused?: boolean
   added: string
   status: Status
@@ -59,6 +61,8 @@ export interface VPS {
   /** Watched datacenter (OVH) or location (Hetzner) codes; empty for any. */
   datacenters: string[]
   note?: string
+  /** Own check interval in minutes; absent for the setting. */
+  interval?: number
   paused?: boolean
   added: string
   status: Status
@@ -111,6 +115,8 @@ export interface Target {
 export interface Settings {
   /** Minutes between checks of each domain. */
   interval: number
+  /** Minutes between checks of each VPS. */
+  vpsInterval: number
   /** Minutes between checks of a VPS while it is in stock. */
   stockInterval: number
   /** Seconds before a registry query is abandoned. */
@@ -137,6 +143,8 @@ export interface ServerConfig {
   limits: {
     minInterval: number
     maxInterval: number
+    minVPSInterval: number
+    maxVPSInterval: number
     minStockInterval: number
     maxStockInterval: number
     minTimeout: number
@@ -194,7 +202,8 @@ export const api = {
 
   addDomains: (names: string, note = '') =>
     request<{ added: Domain[]; failed: { input: string; error: string }[] }>('POST', 'domains', { names, note }),
-  editDomain: (name: string, patch: { note?: string; paused?: boolean }) => request<Domain>('PATCH', `domains/${enc(name)}`, patch),
+  /** interval 0 uses the setting for all domains. */
+  editDomain: (name: string, patch: { note?: string; paused?: boolean; interval?: number }) => request<Domain>('PATCH', `domains/${enc(name)}`, patch),
   removeDomain: (name: string) => request<{ ok: boolean }>('DELETE', `domains/${enc(name)}`),
   checkDomain: (name: string) => request<{ ok: boolean }>('POST', `domains/${enc(name)}/check`),
   checkAll: () => request<{ ok: boolean }>('POST', 'check'),
@@ -204,8 +213,9 @@ export const api = {
     request<{ datacenters: Stock[] }>('GET', `ovh/stock?subsidiary=${enc(subsidiary)}&plan=${enc(plan)}`),
   hetznerPlans: () => request<Catalog>('GET', 'hetzner/plans'),
   hetznerStock: (plan: string) => request<{ datacenters: Stock[] }>('GET', `hetzner/stock?plan=${enc(plan)}`),
-  addVPS: (v: { provider: Provider; subsidiary?: string; plan: string; planName: string; datacenters: string[]; note: string }) => request<VPS>('POST', 'vps', v),
-  editVPS: (id: string, patch: { datacenters?: string[]; note?: string; paused?: boolean }) => request<VPS>('PATCH', `vps/${enc(id)}`, patch),
+  addVPS: (v: { provider: Provider; subsidiary?: string; plan: string; planName: string; datacenters: string[]; note: string; interval?: number }) => request<VPS>('POST', 'vps', v),
+  /** interval 0 uses the setting for all VPS. */
+  editVPS: (id: string, patch: { datacenters?: string[]; note?: string; paused?: boolean; interval?: number }) => request<VPS>('PATCH', `vps/${enc(id)}`, patch),
   removeVPS: (id: string) => request<{ ok: boolean }>('DELETE', `vps/${enc(id)}`),
   checkVPS: (id: string) => request<{ ok: boolean }>('POST', `vps/${enc(id)}/check`),
 

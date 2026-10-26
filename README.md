@@ -12,7 +12,7 @@ It runs as a single container with a small web UI, for one user behind a passwor
 - **Registration status**: registered, dropping (expired, in the redemption or pending delete period) or available, with the registrar, registration and expiry dates, the registry's status codes and a history of status changes
 - **Watch OVHcloud VPS**: choose the OVH shop (country), a plan from OVH's catalog (with its specifications and price) and any datacenter, whole regions (Europe, North America, Asia-Pacific) or individual datacenters. See the current stock of every datacenter, with a link to order, and when each datacenter had stock, on a timeline and in a table.
 - **Watch Hetzner Cloud servers**: any server type, shared or dedicated vCPU, x86 or Arm64 (Ampere), in any location (Falkenstein, Nuremberg, Helsinki, Ashburn, Hillsboro, Singapore) or region, with the same stock view and history. Needs a read-only Hetzner Cloud API token.
-- **Periodic checks** at an interval you choose (5 minutes to 7 days), and more often (every 2 minutes by default) while a VPS is in stock, one query at a time so that registries and OVH do not rate-limit you; check one or everything on demand
+- **Periodic checks** at separate intervals for domains (every 12 hours by default) and VPS (every 15 minutes), each overridable per domain or VPS, and more often (every 2 minutes by default) while a VPS is in stock; one query at a time so that registries and providers do not rate-limit you; check one or everything on demand
 - **Push notifications** to your phone or computer: enable them on the Notifications page of each device, and Dropcatch notifies it when a domain or VPS becomes available, even when the app is closed. No app store, account or third-party service to set up.
 - **Notifications** through any [Apprise URL](https://github.com/caronc/apprise/wiki#notification-services): ntfy, Telegram, Discord, Slack, Pushover, Gotify, e-mail and many more. Send a test from the UI. Optionally also notified when a domain enters its deletion period, is restored by its owner or is registered again, and when a VPS sells out again.
 - **Live updates**: check results appear without reloading
@@ -68,7 +68,7 @@ Each server type lists the locations that offer it, with whether it can be order
 
 ### Checks
 
-Domains and VPS share one schedule and one interval, except that a VPS in stock is checked at the shorter in-stock interval. Checks run one at a time, with a two-second pause in between. A failed check (timeout, rate limit) keeps the last known status and is shown on the domain or VPS; it does not send a notification.
+Domains and VPS share one schedule but have their own intervals: registrations change slowly, so domains are checked every 12 hours by default, while restocks can sell out within the hour, so VPS are checked every 15 minutes. Each domain or VPS can have its own interval instead, such as a domain about to drop. A VPS in stock is checked at the shorter in-stock interval until it sells out. Checks run one at a time, with a two-second pause in between. A failed check (timeout, rate limit) keeps the last known status and is shown on the domain or VPS; it does not send a notification.
 
 ### Push notifications
 
@@ -153,7 +153,7 @@ Instructions for coding agents are in [AGENTS.md](AGENTS.md).
 
 ## Configuration
 
-These are set when starting Dropcatch; the check interval and notifications are configured in the web UI. Every flag can also be set as an environment variable (`--data-dir` → `DROPCATCH_DATA_DIR`). Flags take precedence.
+These are set when starting Dropcatch; the check intervals and notifications are configured in the web UI. Every flag can also be set as an environment variable (`--data-dir` → `DROPCATCH_DATA_DIR`). Flags take precedence.
 
 | Flag | Default | Description |
 |---|---|---|

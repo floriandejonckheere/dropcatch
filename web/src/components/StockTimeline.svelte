@@ -163,8 +163,8 @@
   {/if}
 {/if}
 <p class="hint">
-  Times are those of the checks: every {minutes(Math.min(app.settings.stockInterval, app.settings.interval))} while in stock,
-  every {minutes(app.settings.interval)} otherwise.
+  Times are those of the checks: every {minutes(Math.min(app.settings.stockInterval, v.interval || app.settings.vpsInterval))} while in stock,
+  every {minutes(v.interval || app.settings.vpsInterval)} otherwise.
 </p>
 
 <style>

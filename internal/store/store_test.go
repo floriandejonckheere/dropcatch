@@ -136,3 +136,48 @@ func TestSettingsValidate(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+func TestIntervalSettings(t *testing.T) {
+	// A new installation checks domains rarely and VPS often.
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if set := s.Snapshot().Settings; set.Interval != 12*60 || set.VPSInterval != 15 {
+		t.Fatalf("defaults = %+v", set)
+	}
+
+	// Before VPSInterval existed, VPS were checked at the one interval.
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, FileName), []byte(`{"settings":{"interval":60,"timeout":20}}`), 0o600)
+	if s, err = Open(dir); err != nil {
+		t.Fatal(err)
+	}
+	set := s.Snapshot().Settings
+	if set.Interval != 60 || set.VPSInterval != 60 || set.StockInterval != 2 {
+		t.Fatalf("migrated = %+v", set)
+	}
+
+	set = Settings{Interval: 720, VPSInterval: 15, StockInterval: 2}
+	for _, c := range []struct {
+		got, want time.Duration
+	}{
+		{set.DomainEvery(Domain{}), 12 * time.Hour},
+		{set.DomainEvery(Domain{Interval: 30}), 30 * time.Minute},
+		{set.VPSEvery(VPS{Status: OutOfStock}), 15 * time.Minute},
+		{set.VPSEvery(VPS{Status: OutOfStock, Interval: 5}), 5 * time.Minute},
+		{set.VPSEvery(VPS{Status: Available}), 2 * time.Minute},
+		{set.VPSEvery(VPS{Status: Available, Interval: 1}), time.Minute},
+	} {
+		if c.got != c.want {
+			t.Errorf("got %v, want %v", c.got, c.want)
+		}
+	}
+
+	if (Settings{Interval: 720, VPSInterval: 0, StockInterval: 2, Timeout: 20}).Validate() == nil {
+		t.Error("VPS interval 0 is valid")
+	}
+	if ValidateDomainInterval(1) == nil || ValidateVPSInterval(1) != nil {
+		t.Error("a domain must not be checked every minute; a VPS may")
+	}
+}

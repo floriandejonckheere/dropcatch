@@ -418,3 +418,48 @@ func TestVPS(t *testing.T) {
 		t.Fatalf("add a Local Zone plan: %d %+v", code, lz)
 	}
 }
+
+func TestIntervals(t *testing.T) {
+	ts := newServer(t, "")
+	var settings store.Settings
+	if code := ts.do("PATCH", "/api/settings", map[string]any{"interval": 720, "vpsInterval": 3}, &settings); code != http.StatusOK ||
+		settings.Interval != 720 || settings.VPSInterval != 3 {
+		t.Fatalf("settings: %d %+v", code, settings)
+	}
+	if code := ts.do("PATCH", "/api/settings", map[string]any{"vpsInterval": 0}, nil); code != http.StatusBadRequest {
+		t.Fatalf("VPS interval 0: %d", code)
+	}
+
+	// Domains: an own interval when added and edited; 0 uses the setting.
+	var add struct{ Added []domainView }
+	if code := ts.do("POST", "/api/domains", map[string]any{"names": "a.com b.com", "interval": 60}, &add); code != http.StatusOK ||
+		len(add.Added) != 2 || add.Added[1].Interval != 60 {
+		t.Fatalf("add: %d %+v", code, add)
+	}
+	if code := ts.do("POST", "/api/domains", map[string]any{"names": "c.com", "interval": 1}, nil); code != http.StatusBadRequest {
+		t.Fatalf("domain checked every minute: %d", code)
+	}
+	var d domainView
+	if code := ts.do("PATCH", "/api/domains/a.com", map[string]any{"interval": 0}, &d); code != http.StatusOK || d.Interval != 0 {
+		t.Fatalf("reset domain interval: %d %+v", code, d)
+	}
+	if code := ts.do("PATCH", "/api/domains/a.com", map[string]any{"interval": 99999}, nil); code != http.StatusBadRequest {
+		t.Fatalf("domain interval too long: %d", code)
+	}
+
+	// VPS watches.
+	var v store.VPS
+	vps := map[string]any{"subsidiary": "FR", "plan": "vps-2025-model1", "planName": "VPS-1", "interval": 1}
+	if code := ts.do("POST", "/api/vps", vps, &v); code != http.StatusOK || v.Interval != 1 {
+		t.Fatalf("add VPS: %d %+v", code, v)
+	}
+	if code := ts.do("PATCH", "/api/vps/"+v.ID, map[string]any{"interval": 30}, &v); code != http.StatusOK || v.Interval != 30 {
+		t.Fatalf("edit VPS interval: %d %+v", code, v)
+	}
+	if code := ts.do("PATCH", "/api/vps/"+v.ID, map[string]any{"interval": -5}, nil); code != http.StatusBadRequest {
+		t.Fatalf("negative VPS interval: %d", code)
+	}
+	if ts.store.Snapshot().VPSWatch(v.ID).Interval != 30 {
+		t.Fatal("rejected interval was saved")
+	}
+}
