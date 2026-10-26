@@ -43,6 +43,11 @@
           ? `while in stock, otherwise ${minutes(v.interval || app.settings.vpsInterval)}`
           : v.interval ? 'own interval' : 'default'})</span>
     </dd>
+    <dt>Notifications</dt>
+    <dd>
+      {v.muted ? 'Muted: checked, but no notifications are sent' : 'On'}
+      <button class="link" onclick={() => vpsActions.setMuted(v, !v.muted)}>{v.muted ? 'Unmute' : 'Mute'}</button>
+    </dd>
     <dt>Watching since</dt>
     <dd>{date(v.added)}</dd>
     {#if v.note}
@@ -154,6 +159,12 @@
   dd {
     margin: 0;
     overflow-wrap: anywhere;
+  }
+
+  .link {
+    margin-left: 6px;
+    color: var(--accent-text);
+    font-weight: 600;
   }
 
   .note {

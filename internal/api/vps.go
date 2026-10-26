@@ -127,6 +127,7 @@ func (s *Server) handleVPSAdd(w http.ResponseWriter, r *http.Request) {
 		Datacenters []string `json:"datacenters"`
 		Note        string   `json:"note"`
 		Interval    int      `json:"interval"`
+		Muted       bool     `json:"muted"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -180,7 +181,7 @@ func (s *Server) handleVPSAdd(w http.ResponseWriter, r *http.Request) {
 	if !s.update(w, func(st *store.State) error {
 		p, err := st.AddVPS(store.VPS{
 			Provider: req.Provider, Subsidiary: req.Subsidiary, Plan: req.Plan, PlanName: req.PlanName,
-			Datacenters: dcs, Note: strings.TrimSpace(req.Note), Interval: req.Interval,
+			Datacenters: dcs, Note: strings.TrimSpace(req.Note), Interval: req.Interval, Muted: req.Muted,
 		}, time.Now().UTC())
 		if err != nil {
 			return err
@@ -200,6 +201,7 @@ func (s *Server) handleVPSEdit(w http.ResponseWriter, r *http.Request) {
 		Datacenters *[]string `json:"datacenters"`
 		Note        *string   `json:"note"`
 		Paused      *bool     `json:"paused"`
+		Muted       *bool     `json:"muted"`
 		Interval    *int      `json:"interval"` // 0 for the setting
 	}
 	if !decode(w, r, &req) {
@@ -231,6 +233,9 @@ func (s *Server) handleVPSEdit(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Paused != nil {
 			p.Paused = *req.Paused
+		}
+		if req.Muted != nil {
+			p.Muted = *req.Muted
 		}
 		if req.Interval != nil {
 			if err := ownInterval(*req.Interval, store.ValidateVPSInterval); err != nil {

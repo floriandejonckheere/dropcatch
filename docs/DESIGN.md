@@ -91,7 +91,7 @@ VPS watches are *not checked*, *out of stock* or *available* (a watched datacent
 | a watched datacenter gets stock that it did not have (including on the first check) | always: "*plan* is available", with the new datacenters and an order link |
 | available → out of stock | when *notify on changes* is on |
 
-So stock appearing in a second datacenter is notified too, while a datacenter selling out while others keep stock is not. Changing the watched datacenters recomputes the status from the last stock without notifying.
+So stock appearing in a second datacenter is notified too, while a datacenter selling out while others keep stock is not. Changing the watched datacenters recomputes the status from the last stock without notifying. A muted watch (`muted`) is checked and records its status, history and stock periods as usual, but sends nothing; unmuting it does not notify the stock it already saw, only later changes. Pausing, by contrast, stops the checks.
 
 A failed check records the error on the domain or VPS and keeps the last known status, so an unreachable registry or API never triggers a notification. Each status change is added to the history (the last 20 are kept); for VPS, a change in which datacenters have stock is recorded too, with their names.
 
@@ -139,8 +139,8 @@ All endpoints except `config`, `login` and `logout` require a session when a pas
 | `GET /api/hetzner/plans` | Hetzner Cloud server types: `{currency, plans}`, with `cpuType` and `architecture` |
 | `GET /api/hetzner/stock?plan=` | Locations offering a server type, with their region and current availability |
 | `GET /api/ovh/stock?subsidiary=&plan=` | Datacenters offering a plan, with their region and current stock |
-| `POST /api/vps` | Watch a VPS: `{provider, subsidiary, plan, planName, datacenters, note, interval}`; `provider` is `ovh` (default) or `hetzner` (no subsidiary, `datacenters` are locations); `datacenters` empty for any. `409` for an identical watch |
-| `PATCH /api/vps/{id}` | Change `datacenters`, `note`, `paused` or `interval` (minutes; 0 for the setting) |
+| `POST /api/vps` | Watch a VPS: `{provider, subsidiary, plan, planName, datacenters, note, interval, muted}`; `provider` is `ovh` (default) or `hetzner` (no subsidiary, `datacenters` are locations); `datacenters` empty for any. `409` for an identical watch |
+| `PATCH /api/vps/{id}` | Change `datacenters`, `note`, `paused`, `muted` (checked, but no notifications) or `interval` (minutes; 0 for the setting) |
 | `DELETE /api/vps/{id}` | Stop watching |
 | `POST /api/vps/{id}/check` | Check now (queued; the result arrives as an event) |
 | `POST /api/targets` | Add a target: `{name, url, enabled}`, or `{name, type: "push", push: {endpoint, p256dh, auth}}` for this browser (replaces its earlier target) |

@@ -214,6 +214,9 @@ type VPS struct {
 	Datacenters []string `json:"datacenters"`
 	Note        string   `json:"note,omitempty"`
 	Paused      bool     `json:"paused,omitempty"`
+	// Muted stops the notifications about this watch; it is still checked,
+	// and its status and stock history kept current.
+	Muted bool `json:"muted,omitempty"`
 	// Interval replaces Settings.VPSInterval for this watch, in minutes;
 	// 0 uses the setting.
 	Interval int       `json:"interval,omitempty"`

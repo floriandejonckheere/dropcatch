@@ -20,6 +20,7 @@
   let plan = $state(initial.plan ?? '')
   let note = $state(initial.note ?? '')
   let interval = $state(initial.interval ?? 0)
+  let notify = $state(!initial.muted)
   let any = $state(!initial.datacenters?.length)
   let picked = $state<string[]>(initial.datacenters ?? [])
 
@@ -121,8 +122,8 @@
     const datacenters = any ? [] : picked
     try {
       const v = editing
-        ? await api.editVPS(initial.id!, { datacenters, note, interval })
-        : await api.addVPS({ provider, subsidiary: hetzner ? undefined : subsidiary, plan: plan.trim(), planName, datacenters, note, interval })
+        ? await api.editVPS(initial.id!, { datacenters, note, interval, muted: !notify })
+        : await api.addVPS({ provider, subsidiary: hetzner ? undefined : subsidiary, plan: plan.trim(), planName, datacenters, note, interval, muted: !notify })
       // The first check can finish, and arrive as an event, before this
       // response: keep that newer version.
       if (editing || !app.vps.some((x) => x.id === v.id)) app.upsertVPS(v)
@@ -263,6 +264,11 @@
         max={session.config?.limits.maxVPSInterval ?? 10080}
         note={`While in stock, it is checked every ${minutes(app.settings.stockInterval)} if that is shorter.`}
       />
+      <label class="check">
+        <input type="checkbox" bind:checked={notify} />
+        Notify me about this VPS
+      </label>
+      {#if !notify}<p class="hint">It is still checked and its stock history kept, but no notifications are sent.</p>{/if}
     {/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}
   </form>

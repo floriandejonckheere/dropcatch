@@ -22,6 +22,15 @@ export const vpsActions = {
     }
   },
 
+  async setMuted(v: VPS, muted: boolean) {
+    try {
+      app.upsertVPS(await api.editVPS(v.id, { muted }))
+      toasts.show(muted ? `No more notifications about ${v.planName}; it is still checked` : `Notifying about ${v.planName} again`)
+    } catch (e) {
+      toasts.error(e)
+    }
+  },
+
   async remove(v: VPS): Promise<boolean> {
     const ok = await dialogs.confirm({
       title: `Stop watching ${v.planName}?`,

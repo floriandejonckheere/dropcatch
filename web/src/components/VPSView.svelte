@@ -46,6 +46,9 @@
       v.paused
         ? { label: 'Resume monitoring', icon: 'play', run: () => vpsActions.setPaused(v, false) }
         : { label: 'Pause monitoring', icon: 'pause', run: () => vpsActions.setPaused(v, true) },
+      v.muted
+        ? { label: 'Unmute notifications', icon: 'bell', run: () => vpsActions.setMuted(v, false) }
+        : { label: 'Mute notifications', icon: 'bell-off', run: () => vpsActions.setMuted(v, true) },
       { label: 'Remove', icon: 'trash', danger: true, separator: true, run: () => vpsActions.remove(v) },
     ])
   }
@@ -69,7 +72,11 @@
         <li class="row card" class:paused={v.paused} class:available={v.status === 'available' && !v.paused}>
           <div class="status"><StatusBadge status={v.status} paused={v.paused} /></div>
           <button class="name" onclick={() => (details = v.id)}>
-            <span class="plan ellipsis">{v.planName} <span class="code">{planLine(v)}</span></span>
+            <span class="plan ellipsis">
+              {v.planName}
+              {#if v.muted}<span class="muted-icon" title="Notifications muted" aria-label="Notifications muted"><Icon name="bell-off" size={13} /></span>{/if}
+              <span class="code">{planLine(v)}</span>
+            </span>
             {#if v.note}<span class="note ellipsis">{v.note}</span>{/if}
           </button>
           <div class="dcs">
@@ -201,6 +208,13 @@
     font-weight: 400;
     font-size: 12px;
     color: var(--text-3);
+  }
+
+  .muted-icon {
+    display: inline-grid;
+    margin-left: 2px;
+    color: var(--text-3);
+    vertical-align: -1px;
   }
 
   .note {

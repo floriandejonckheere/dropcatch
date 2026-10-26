@@ -34,7 +34,7 @@ await api('PATCH', 'domains/dropshipping.dev', { interval: 60 })
 const eu = ['eu-central-waw', 'eu-south-mil', 'eu-west-gra', 'eu-west-lim', 'eu-west-rbx', 'eu-west-sbg']
 await api('POST', 'vps', { subsidiary: 'FR', plan: 'vps-2025-model1', planName: 'VPS-1', datacenters: eu, note: 'Cheapest one', interval: 5 })
 await api('POST', 'vps', { subsidiary: 'FR', plan: 'vps-2025-model2', planName: 'VPS-2', datacenters: ['ca-east-bhs'] })
-await api('POST', 'vps', { subsidiary: 'FR', plan: 'vps-2025-model4', planName: 'VPS-4', datacenters: ['eu-west-gra', 'eu-west-rbx'] })
+await api('POST', 'vps', { subsidiary: 'FR', plan: 'vps-2025-model4', planName: 'VPS-4', datacenters: ['eu-west-gra', 'eu-west-rbx'], muted: true })
 await api('POST', 'vps', { provider: 'hetzner', plan: 'cax11', planName: 'CAX11', datacenters: ['fsn1', 'hel1', 'nbg1'], note: 'Arm build runner' })
 await api('POST', 'vps', { provider: 'hetzner', plan: 'ccx13', planName: 'CCX13', datacenters: [] })
 await api('POST', 'targets', { name: 'Phone (ntfy)', url: 'ntfy://dropcatch-alerts', enabled: true })

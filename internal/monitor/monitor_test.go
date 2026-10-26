@@ -460,3 +460,41 @@ func TestIntervals(t *testing.T) {
 		now = now.Add(-want.wait)
 	}
 }
+
+func TestMutedVPS(t *testing.T) {
+	m, st, _, n := setup(t)
+	o := m.ovh.(*fakeOVH)
+	var id string
+	_ = st.Update(func(s *store.State) error {
+		v, _ := s.AddVPS(store.VPS{Provider: store.OVH, Subsidiary: "FR", Plan: "vps-1", PlanName: "VPS-1", Muted: true}, time.Now())
+		id = v.ID
+		return nil
+	})
+	ctx := context.Background()
+
+	// A muted watch is still checked and records its stock, but notifies
+	// no one.
+	o.set("vps-1", nil, "eu-west-gra", "eu-west-sbg")
+	m.check(ctx, VPSKey(id))
+	o.set("vps-1", nil, "+eu-west-gra", "eu-west-sbg")
+	m.check(ctx, VPSKey(id))
+	v := st.Snapshot().VPSWatch(id)
+	if got := n.take(); len(got) != 0 {
+		t.Fatalf("muted watch sent %+v", got)
+	}
+	if v.Status != store.Available || len(v.Periods) != 1 || len(v.History) != 2 {
+		t.Fatalf("muted watch not kept current: %+v", v)
+	}
+
+	// Unmuted, it notifies the next change, not the stock it already saw.
+	_ = st.Update(func(s *store.State) error { s.VPSWatch(id).Muted = false; return nil })
+	m.check(ctx, VPSKey(id))
+	if got := n.take(); len(got) != 0 {
+		t.Fatalf("unmuting notified the known stock: %+v", got)
+	}
+	o.set("vps-1", nil, "+eu-west-gra", "+eu-west-sbg")
+	m.check(ctx, VPSKey(id))
+	if got := n.take(); len(got) == 0 || got[0].title != "VPS-1 is available" {
+		t.Fatalf("unmuted watch sent %+v", got)
+	}
+}

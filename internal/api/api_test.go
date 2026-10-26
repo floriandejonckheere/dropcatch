@@ -456,6 +456,9 @@ func TestIntervals(t *testing.T) {
 	if code := ts.do("PATCH", "/api/vps/"+v.ID, map[string]any{"interval": 30}, &v); code != http.StatusOK || v.Interval != 30 {
 		t.Fatalf("edit VPS interval: %d %+v", code, v)
 	}
+	if code := ts.do("PATCH", "/api/vps/"+v.ID, map[string]any{"muted": true}, &v); code != http.StatusOK || !v.Muted || v.Paused || v.Interval != 30 {
+		t.Fatalf("mute VPS: %d %+v", code, v)
+	}
 	if code := ts.do("PATCH", "/api/vps/"+v.ID, map[string]any{"interval": -5}, nil); code != http.StatusBadRequest {
 		t.Fatalf("negative VPS interval: %d", code)
 	}

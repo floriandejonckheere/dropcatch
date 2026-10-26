@@ -64,6 +64,8 @@ export interface VPS {
   /** Own check interval in minutes; absent for the setting. */
   interval?: number
   paused?: boolean
+  /** Checked, but sends no notifications. */
+  muted?: boolean
   added: string
   status: Status
   stock?: Stock[]
@@ -213,9 +215,9 @@ export const api = {
     request<{ datacenters: Stock[] }>('GET', `ovh/stock?subsidiary=${enc(subsidiary)}&plan=${enc(plan)}`),
   hetznerPlans: () => request<Catalog>('GET', 'hetzner/plans'),
   hetznerStock: (plan: string) => request<{ datacenters: Stock[] }>('GET', `hetzner/stock?plan=${enc(plan)}`),
-  addVPS: (v: { provider: Provider; subsidiary?: string; plan: string; planName: string; datacenters: string[]; note: string; interval?: number }) => request<VPS>('POST', 'vps', v),
+  addVPS: (v: { provider: Provider; subsidiary?: string; plan: string; planName: string; datacenters: string[]; note: string; interval?: number; muted?: boolean }) => request<VPS>('POST', 'vps', v),
   /** interval 0 uses the setting for all VPS. */
-  editVPS: (id: string, patch: { datacenters?: string[]; note?: string; paused?: boolean; interval?: number }) => request<VPS>('PATCH', `vps/${enc(id)}`, patch),
+  editVPS: (id: string, patch: { datacenters?: string[]; note?: string; paused?: boolean; muted?: boolean; interval?: number }) => request<VPS>('PATCH', `vps/${enc(id)}`, patch),
   removeVPS: (id: string) => request<{ ok: boolean }>('DELETE', `vps/${enc(id)}`),
   checkVPS: (id: string) => request<{ ok: boolean }>('POST', `vps/${enc(id)}/check`),
 

@@ -65,7 +65,11 @@ func (m *Monitor) checkVPS(ctx context.Context, id string) {
 		slog.Info("checked", "vps", v.Plan, "subsidiary", v.Subsidiary, "status", updated.Status)
 	}
 	m.OnVPS(updated)
-	if msg != nil {
+	switch {
+	case msg == nil:
+	case updated.Muted:
+		slog.Info("notification muted", "vps", updated.Plan, "title", msg.Title)
+	default:
 		m.Send(ctx, *msg)
 	}
 }
