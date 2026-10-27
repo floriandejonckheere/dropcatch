@@ -76,6 +76,7 @@ Dropcatch sends [Web Push](https://developer.mozilla.org/en-US/docs/Web/API/Push
 
 - Push needs Dropcatch to be served over **HTTPS** (or opened on `localhost`).
 - On **iPhone and iPad** (iOS 16.4 or later), add Dropcatch to the home screen first (Share → Add to Home Screen) and enable push from the installed app.
+- **Chrome on Android** may label the notifications "possible spam" (and offer to unsubscribe or block the site). Chrome decides this on the device, from how rarely you interact with a site's notifications and how little you visit the site, and Dropcatch cannot switch it off. To keep it from happening: install Dropcatch (menu → Add to Home screen → Install), open it now and then, and tap the notifications when they arrive. If one is flagged, choose "Show notifications" or "Always allow" instead of unsubscribing; Chrome stops flagging a site after that. Apprise targets (ntfy, Telegram) are not affected.
 - Dropcatch signs its messages with a key it creates in the data directory (`vapid.key`). Keep it with the rest of the data: with a new key, devices have to enable push again.
 - A device that turns notifications off or removes the app is disabled as a target the next time something is sent to it.
 

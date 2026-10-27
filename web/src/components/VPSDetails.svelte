@@ -1,8 +1,9 @@
 <script lang="ts">
-  import type { VPS } from '../lib/api'
+  import { api, type Catalog, type VPS } from '../lib/api'
   import { date, dateTime, minutes, regionLabel, relative, statusLabel, vpsEvery } from '../lib/format'
+  import { session } from '../lib/session.svelte'
   import { app } from '../lib/state.svelte'
-  import { orderUrl, planLine, place, places, providerName, vpsActions } from '../lib/vps'
+  import { orderUrl, planLine, planSummary, place, places, providerName, vpsActions } from '../lib/vps'
   import Icon from './Icon.svelte'
   import Modal from './Modal.svelte'
   import StatusBadge from './StatusBadge.svelte'
@@ -12,6 +13,21 @@
 
   const checking = $derived(app.checking.includes(`vps:${v.id}`))
   const watches = (code: string) => !v.datacenters.length || v.datacenters.includes(code)
+
+  // The specifications and price come from the provider's catalog; the
+  // dialog is complete without them when it cannot be loaded.
+  let catalog = $state<Catalog | null>(null)
+  const plan = $derived(catalog?.plans.find((p) => p.code === v.plan))
+  $effect(() => {
+    const [provider, subsidiary] = [v.provider, v.subsidiary || 'FR']
+    catalog = null
+    if (provider === 'hetzner' && !session.config?.hetzner) return
+    ;(provider === 'hetzner' ? api.hetznerPlans() : api.ovhPlans(subsidiary))
+      .then((c) => {
+        if (provider === v.provider) catalog = c
+      })
+      .catch(() => {})
+  })
 
   async function remove() {
     if (await vpsActions.remove(v)) onclose()
@@ -32,6 +48,10 @@
   {/if}
 
   <dl>
+    {#if plan && catalog}
+      <dt>Plan</dt>
+      <dd>{planSummary(plan, catalog.currency)}</dd>
+    {/if}
     <dt>Watching</dt>
     <dd>{v.datacenters.length ? places(v.provider, v.datacenters.length) : `Any ${place(v.provider)}`}</dd>
     <dt>Last checked</dt>
