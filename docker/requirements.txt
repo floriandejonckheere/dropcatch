@@ -1,2 +1,2 @@
 # Installed in the Docker image; Dependabot keeps the version current.
-apprise==2.0.1
+apprise==2.1.0
