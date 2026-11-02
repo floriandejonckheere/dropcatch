@@ -72,6 +72,9 @@ func run() error {
 		slog.Info("authentication enabled")
 	} else {
 		slog.Warn("authentication disabled: anyone who can reach Dropcatch can see and change your domains and notification URLs")
+		if len(cfg.AllowedHosts) == 0 {
+			slog.Info("without a password, Dropcatch only answers to IP addresses and localhost; set DROPCATCH_ALLOWED_HOSTS to reach it by name")
+		}
 	}
 
 	srv := &http.Server{

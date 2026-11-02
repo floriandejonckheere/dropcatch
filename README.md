@@ -171,6 +171,8 @@ These are set when starting Dropcatch; the check intervals and notifications are
 | `--data-dir` | `$XDG_CONFIG_HOME/dropcatch` (`/data` in Docker) | Where the domains, notification targets, settings and session key are stored |
 | `--listen` | `:8080` | Address to listen on |
 | `--base-path` | `/` | URL prefix when served behind a reverse proxy (e.g. `/dropcatch`) |
+| `--trusted-proxies` | | Comma-separated addresses or CIDR ranges of reverse proxies, such as `172.16.0.0/12` for Docker networks. Their `X-Forwarded-For` header gives the client's address, which failed logins are counted by; without it, all clients of the proxy share one limit, and anyone can lock out the others |
+| `--allowed-hosts` | | Comma-separated host names Dropcatch is reached at. Without a password, it only answers to IP addresses, `localhost` and these names (against [DNS rebinding](https://en.wikipedia.org/wiki/DNS_rebinding)) |
 | `--password` | | Enables login with this password |
 | `--password-hash` | | Enables login with a bcrypt hash instead of a plain password |
 | `--username` | | Also require this user name at login |
@@ -185,7 +187,7 @@ These are set when starting Dropcatch; the check intervals and notifications are
 
 In Docker, `PUID` and `PGID` (default `1000`) set the user and group Dropcatch runs as.
 
-Without a password, anyone who can reach Dropcatch can see and change your domains and notification URLs; it logs a warning at startup. Pass the password, secret and secret key through environment variables or files rather than command-line flags, which other users on the host can see in the process list. To create a bcrypt hash: `htpasswd -bnBC 10 "" 'your-password' | tr -d ':\n'`.
+Without a password, anyone who can reach Dropcatch can see and change your domains and notification URLs; it logs a warning at startup. So that web pages cannot reach it through your browser, it then only answers when it is addressed by IP address, as `localhost`, or by a name in `--allowed-hosts`. Behind a reverse proxy, set `--trusted-proxies` to the proxy's address. Pass the password, secret and secret key through environment variables or files rather than command-line flags, which other users on the host can see in the process list. To create a bcrypt hash: `htpasswd -bnBC 10 "" 'your-password' | tr -d ':\n'`.
 
 ## Data
 

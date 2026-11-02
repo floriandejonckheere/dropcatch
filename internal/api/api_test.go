@@ -8,9 +8,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"maps"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -96,8 +99,12 @@ type testServer struct {
 	cookie *http.Cookie
 }
 
+// newServer returns a server reached at example.com, httptest's host.
 func newServer(t *testing.T, password string) *testServer {
-	cfg := &config.Config{DataDir: t.TempDir(), BasePath: "/", Password: password}
+	return newServerWith(t, &config.Config{DataDir: t.TempDir(), BasePath: "/", Password: password, AllowedHosts: []string{"example.com"}})
+}
+
+func newServerWith(t *testing.T, cfg *config.Config) *testServer {
 	st, err := store.Open(cfg.DataDir, "")
 	if err != nil {
 		t.Fatal(err)
@@ -367,6 +374,106 @@ func TestCrossOrigin(t *testing.T) {
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("cross-origin POST: %d", w.Code)
 	}
+}
+
+func TestAllowedHost(t *testing.T) {
+	// Without a password, only IP addresses, localhost and the allowed
+	// hosts are answered, so that a page rebound to Dropcatch's address
+	// (DNS rebinding) cannot use it.
+	ts := newServerWith(t, &config.Config{DataDir: t.TempDir(), BasePath: "/", AllowedHosts: []string{"dropcatch.example"}})
+	for host, want := range map[string]int{
+		"127.0.0.1:8080":         http.StatusOK,
+		"[::1]:8080":             http.StatusOK,
+		"192.168.1.20":           http.StatusOK,
+		"localhost:8080":         http.StatusOK,
+		"app.localhost":          http.StatusOK,
+		"Dropcatch.Example:443":  http.StatusOK,
+		"dropcatch.example.":     http.StatusOK,
+		"evil.example:8080":      http.StatusMisdirectedRequest,
+		"dropcatch.example.evil": http.StatusMisdirectedRequest,
+	} {
+		r := httptest.NewRequest("GET", "/api/state", nil)
+		r.Host = host
+		w := httptest.NewRecorder()
+		ts.h.ServeHTTP(w, r)
+		if w.Code != want {
+			t.Errorf("Host %s: %d, want %d", host, w.Code, want)
+		}
+	}
+
+	// With a password, any host is answered: the session cookie is not
+	// sent to a rebound name, so the page would have to log in first.
+	ts = newServerWith(t, &config.Config{DataDir: t.TempDir(), BasePath: "/", Password: "pw"})
+	r := httptest.NewRequest("GET", "/api/config", nil)
+	r.Host = "dropcatch.example"
+	w := httptest.NewRecorder()
+	ts.h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("with a password: %d", w.Code)
+	}
+}
+
+func TestLoginBehindProxy(t *testing.T) {
+	ts := newServerWith(t, &config.Config{DataDir: t.TempDir(), BasePath: "/", Password: "pw", TrustedProxies: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}})
+	login := func(client, password string) int {
+		r := httptest.NewRequest("POST", "/api/login", strings.NewReader(`{"password":"`+password+`"}`))
+		r.RemoteAddr = "192.0.2.1:5000" // the proxy
+		r.Header.Set("X-Forwarded-For", client)
+		w := httptest.NewRecorder()
+		ts.h.ServeHTTP(w, r)
+		return w.Code
+	}
+	for range 10 {
+		login("203.0.113.66", "guess")
+	}
+	if code := login("203.0.113.66", "pw"); code != http.StatusTooManyRequests {
+		t.Fatalf("attacker after 10 failures: %d", code)
+	}
+	// Another client of the same proxy is not locked out.
+	if code := login("198.51.100.7", "pw"); code != http.StatusOK {
+		t.Fatalf("owner: %d", code)
+	}
+}
+
+func TestSlowBody(t *testing.T) {
+	defer func(d time.Duration) { bodyTimeout = d }(bodyTimeout)
+	bodyTimeout = 300 * time.Millisecond
+	ts := newServer(t, "pw")
+	srv := httptest.NewServer(ts.h)
+	defer srv.Close()
+
+	// A body that never arrives ends the connection.
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_, _ = conn.Write([]byte("POST /api/login HTTP/1.1\r\nHost: example.com\r\nContent-Length: 100\r\n\r\n{"))
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	start := time.Now()
+	_, _ = io.ReadAll(conn)
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("slow body kept the connection for %v", d)
+	}
+
+	// Once the body arrived, a handler may take longer than bodyTimeout
+	// (checking a Hetzner token, running Apprise) without its request
+	// being cancelled.
+	slow := httptest.NewServer(limitBodyTime(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		select {
+		case <-r.Context().Done():
+			w.WriteHeader(http.StatusServiceUnavailable)
+		case <-time.After(3 * bodyTimeout):
+			w.WriteHeader(http.StatusOK)
+		}
+	})))
+	defer slow.Close()
+	res, err := http.Post(slow.URL, "application/json", strings.NewReader(`{}`))
+	if err != nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("slow handler: %v %v", res, err)
+	}
+	res.Body.Close()
 }
 
 func TestVPS(t *testing.T) {

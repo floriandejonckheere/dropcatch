@@ -24,6 +24,8 @@ services:
       # Encrypts the Hetzner tokens and notification URLs in the data volume:
       # the output of openssl rand -hex 32, or DROPCATCH_SECRET_KEY_FILE.
       # DROPCATCH_SECRET_KEY: your-key
+      # Behind a reverse proxy on a Docker network: count failed logins per client, not per proxy.
+      # DROPCATCH_TRUSTED_PROXIES: 172.16.0.0/12,192.168.0.0/16
       # DROPCATCH_BASE_PATH: /dropcatch
       # TZ: Europe/Brussels
 

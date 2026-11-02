@@ -124,6 +124,12 @@ With a secret key (`--secret-key`, at least 32 characters), the credentials in t
 
 Taken from Wavr unchanged: a single password (plain or bcrypt) with an optional username; HMAC-signed session cookies (30 days) keyed on a secret stored in the data directory and on the credentials, so changing the password logs out every session; logged-out sessions are remembered until they expire; ten failed logins per client in 15 minutes lock it out for the rest of the window. Modifying requests must be POST, PATCH or DELETE and are refused when their `Origin` is another host. A strict Content Security Policy allows only Dropcatch's own scripts.
 
+Added since:
+
+- **Clients behind a proxy.** A client is its IPv4 address or IPv6 /64 (one subscriber usually has a whole /64, so counting addresses would allow unlimited guesses). Behind a reverse proxy every request comes from the proxy, so one client could lock out all the others; with `--trusted-proxies`, the client is the last address in `X-Forwarded-For` that is not a trusted proxy (proxies append the address they received the request from; earlier entries can be forged). At most 10,000 clients with recent failures are remembered; beyond that, new clients are refused until failures expire, rather than older ones forgotten, which would let a flood of addresses reset its own count.
+- **DNS rebinding.** Without a password, the `Origin` check does not stop a page whose domain was rebound to Dropcatch's address: its requests are same-origin. Dropcatch then only answers to IP addresses, `localhost` and `--allowed-hosts`, names a page cannot rebind. With a password, the session cookie is not sent to the rebound name.
+- **Slow requests.** The server has no `ReadTimeout`, which would also end the event stream (and cancel slow handlers, as the server reads the connection after the body to notice a client going away). Instead, a request body must arrive within 30 seconds; the deadline is lifted once it has.
+
 ## 4. API
 
 All endpoints except `config`, `login` and `logout` require a session when a password is set.

@@ -8,10 +8,15 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"path"
+	"slices"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/floriandejonckheere/dropcatch/internal/auth"
 	"github.com/floriandejonckheere/dropcatch/internal/config"
@@ -112,6 +117,8 @@ func (s *Server) Handler() http.Handler {
 	var h http.Handler = mux
 	h = s.requireAuth(h)
 	h = sameOrigin(h)
+	h = limitBodyTime(h)
+	h = s.allowedHost(h)
 	h = securityHeaders(h)
 	if s.cfg.BasePath != "/" {
 		h = http.StripPrefix(strings.TrimSuffix(s.cfg.BasePath, "/"), h)
@@ -235,6 +242,72 @@ func sameOrigin(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// allowedHost refuses requests for host names Dropcatch was not told
+// about, when it has no password. A web page can rebind its own domain
+// to Dropcatch's address (DNS rebinding); its requests are then
+// same-origin, and without a password nothing else stops them. A page
+// cannot do that with an IP address or localhost.
+func (s *Server) allowedHost(next http.Handler) http.Handler {
+	if s.auth != nil && len(s.cfg.AllowedHosts) == 0 {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		host = strings.ToLower(strings.TrimSuffix(host, "."))
+		_, err := netip.ParseAddr(strings.Trim(host, "[]"))
+		if err != nil && host != "localhost" && !strings.HasSuffix(host, ".localhost") && !slices.Contains(s.cfg.AllowedHosts, host) {
+			writeError(w, http.StatusMisdirectedRequest, "Dropcatch does not answer to "+host+": add it to DROPCATCH_ALLOWED_HOSTS")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// bodyTimeout bounds the time a request body takes to arrive, so that
+// slow clients cannot hold connections open. The server has no
+// ReadTimeout because that would also end the event stream.
+var bodyTimeout = 30 * time.Second
+
+// limitBodyTime ends the connection when the request body does not arrive
+// within bodyTimeout. Once it has, the deadline is lifted: the server
+// keeps reading the connection to notice that the client went away, and a
+// deadline then would cancel a slow handler.
+func limitBodyTime(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body == nil || r.Body == http.NoBody {
+			next.ServeHTTP(w, r)
+			return
+		}
+		rc := http.NewResponseController(w)
+		if err := rc.SetReadDeadline(time.Now().Add(bodyTimeout)); err != nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		r.Body = &deadlineBody{ReadCloser: r.Body, done: func() { _ = rc.SetReadDeadline(time.Time{}) }}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// deadlineBody calls done once the body was read to the end. After any
+// other error, such as the deadline passing, the deadline stays, so that
+// the server does not wait for the rest of the body either.
+type deadlineBody struct {
+	io.ReadCloser
+	done func()
+	once sync.Once
+}
+
+func (b *deadlineBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err == io.EOF {
+		b.once.Do(b.done)
+	}
+	return n, err
 }
 
 func (s *Server) uiHandler() http.Handler {

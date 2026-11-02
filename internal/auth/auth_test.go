@@ -3,6 +3,8 @@ package auth
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
+	"strconv"
 	"testing"
 	"time"
 
@@ -21,13 +23,13 @@ func TestLoginAndSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.Login("1.1.1.1", "admin", "wrong", false); err == nil {
+	if _, err := a.Login(netip.MustParseAddr("1.1.1.1"), "admin", "wrong", false); err == nil {
 		t.Fatal("wrong password accepted")
 	}
-	if _, err := a.Login("1.1.1.1", "root", "hunter2", false); err == nil {
+	if _, err := a.Login(netip.MustParseAddr("1.1.1.1"), "root", "hunter2", false); err == nil {
 		t.Fatal("wrong username accepted")
 	}
-	c, err := a.Login("1.1.1.1", "admin", "hunter2", false)
+	c, err := a.Login(netip.MustParseAddr("1.1.1.1"), "admin", "hunter2", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +66,7 @@ func TestRevoke(t *testing.T) {
 	dir := t.TempDir()
 	a, _ := New("", "pw", "", "secret", dir)
 	login := func() *http.Request {
-		c, err := a.Login("1.1.1.1", "", "pw", false)
+		c, err := a.Login(netip.MustParseAddr("1.1.1.1"), "", "pw", false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -95,16 +97,83 @@ func TestBcryptAndRateLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.Login("2.2.2.2", "", "s3cret", false); err != nil {
+	if _, err := a.Login(netip.MustParseAddr("2.2.2.2"), "", "s3cret", false); err != nil {
 		t.Fatalf("bcrypt login failed: %v", err)
 	}
 	for range maxFailures {
-		_, _ = a.Login("3.3.3.3", "", "bad", false)
+		_, _ = a.Login(netip.MustParseAddr("3.3.3.3"), "", "bad", false)
 	}
-	if _, err := a.Login("3.3.3.3", "", "s3cret", false); err != ErrRateLimited {
+	if _, err := a.Login(netip.MustParseAddr("3.3.3.3"), "", "s3cret", false); err != ErrRateLimited {
 		t.Fatalf("expected rate limit, got %v", err)
 	}
-	if _, err := a.Login("4.4.4.4", "", "s3cret", false); err != nil {
+	if _, err := a.Login(netip.MustParseAddr("4.4.4.4"), "", "s3cret", false); err != nil {
 		t.Fatalf("other client limited: %v", err)
+	}
+}
+
+func TestRateLimitClients(t *testing.T) {
+	a, err := New("", "s3cret", "", "fixed-secret", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The addresses of one IPv6 /64 are one client.
+	for i := range maxFailures {
+		_, _ = a.Login(netip.MustParseAddr("2001:db8:1:2::"+strconv.Itoa(i+1)), "", "bad", false)
+	}
+	if _, err := a.Login(netip.MustParseAddr("2001:db8:1:2:ffff::1"), "", "s3cret", false); err != ErrRateLimited {
+		t.Fatalf("same /64: %v", err)
+	}
+	if _, err := a.Login(netip.MustParseAddr("2001:db8:1:3::1"), "", "s3cret", false); err != nil {
+		t.Fatalf("other /64 limited: %v", err)
+	}
+	// An IPv4 address is the same client in its IPv6-mapped form.
+	for range maxFailures {
+		_, _ = a.Login(netip.MustParseAddr("::ffff:192.0.2.1"), "", "bad", false)
+	}
+	if _, err := a.Login(netip.MustParseAddr("192.0.2.1"), "", "s3cret", false); err != ErrRateLimited {
+		t.Fatalf("mapped address: %v", err)
+	}
+
+	// When too many clients have failed, new ones are refused rather than
+	// the remembered ones forgotten, until their failures expire.
+	b, _ := New("", "s3cret", "", "fixed-secret", "")
+	for i := range maxClients {
+		b.failures[strconv.Itoa(i)] = []time.Time{time.Now()}
+	}
+	if _, err := b.Login(netip.MustParseAddr("198.51.100.1"), "", "s3cret", false); err != ErrRateLimited {
+		t.Fatalf("new client while full: %v", err)
+	}
+	b.failures["0"] = []time.Time{time.Now().Add(-failWindow)}
+	if _, err := b.Login(netip.MustParseAddr("198.51.100.1"), "", "s3cret", false); err != nil {
+		t.Fatalf("new client after an expiry: %v", err)
+	}
+}
+
+func TestClientIP(t *testing.T) {
+	trusted := []netip.Prefix{netip.MustParsePrefix("172.16.0.0/12"), netip.MustParsePrefix("10.0.0.1/32")}
+	for _, c := range []struct {
+		remote, xff, want string
+	}{
+		// Not from a proxy: the header is ignored.
+		{"203.0.113.5:4000", "198.51.100.7", "203.0.113.5"},
+		// From the proxy: the address it appended.
+		{"172.18.0.2:4000", "198.51.100.7", "198.51.100.7"},
+		// Forged addresses before it do not count.
+		{"172.18.0.2:4000", "1.2.3.4, 198.51.100.7", "198.51.100.7"},
+		// Through two proxies.
+		{"172.18.0.2:4000", "198.51.100.7, 10.0.0.1", "198.51.100.7"},
+		// No header, or garbage: the proxy itself.
+		{"172.18.0.2:4000", "", "172.18.0.2"},
+		{"172.18.0.2:4000", "unknown", "172.18.0.2"},
+		{"[::ffff:172.18.0.2]:4000", "2001:db8::1", "2001:db8::1"},
+	} {
+		r := httptest.NewRequest("POST", "/api/login", nil)
+		r.RemoteAddr = c.remote
+		if c.xff != "" {
+			r.Header.Set("X-Forwarded-For", c.xff)
+		}
+		if got := ClientIP(r, trusted); got.String() != c.want {
+			t.Errorf("%s with %q: %v, want %s", c.remote, c.xff, got, c.want)
+		}
 	}
 }

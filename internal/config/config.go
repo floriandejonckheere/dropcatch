@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,6 +36,14 @@ type Config struct {
 	// SecretKey encrypts the credentials in the state file (Hetzner
 	// tokens, Apprise URLs); empty stores them as plain text.
 	SecretKey string
+
+	// TrustedProxies are the reverse proxies whose X-Forwarded-For header
+	// names the client, for the login rate limit.
+	TrustedProxies []netip.Prefix
+	// AllowedHosts are the host names Dropcatch answers to, besides IP
+	// addresses and localhost. Without a password, other names are refused,
+	// against DNS rebinding.
+	AllowedHosts []string
 
 	// Authentication is enabled when Password or PasswordHash is set.
 	Username     string
@@ -64,13 +73,14 @@ func Parse(args []string, getenv func(string) string) (*Config, error) {
 	apprise := fs.String("apprise", env("apprise", ""), "path to the apprise CLI (auto-detected on PATH when empty)")
 	fs.StringVar(&c.RDAPBootstrap, "rdap-bootstrap", env("rdap-bootstrap", "https://data.iana.org/rdap/dns.json"), "URL of the RDAP bootstrap file (RFC 9224)")
 	fs.StringVar(&c.OVHAPI, "ovh-api", env("ovh-api", ""), "base URL of the OVH API, such as https://eu.api.ovh.com/v1 (default: the API of each subsidiary)")
-
 	fs.StringVar(&c.HetznerAPI, "hetzner-api", env("hetzner-api", "https://api.hetzner.cloud/v1"), "base URL of the Hetzner Cloud API")
 	fs.StringVar(&c.Username, "username", env("username", ""), "username for login (optional; requires a password)")
 	fs.StringVar(&c.Password, "password", env("password", ""), "password for login; enables authentication")
 	fs.StringVar(&c.PasswordHash, "password-hash", env("password-hash", ""), "bcrypt hash of the password (alternative to --password)")
 	fs.StringVar(&c.Secret, "secret", env("secret", ""), "key for signing session cookies (default: generated and stored in the data dir)")
 	fs.StringVar(&c.SecretKey, "secret-key", env("secret-key", ""), "key that encrypts the credentials in the data dir (at least 32 characters; default: not encrypted)")
+	proxies := fs.String("trusted-proxies", env("trusted-proxies", ""), "comma-separated addresses or CIDR ranges of reverse proxies whose X-Forwarded-For header is trusted")
+	hosts := fs.String("allowed-hosts", env("allowed-hosts", ""), "comma-separated host names Dropcatch is reached at; required without a password, unless it is reached by IP address or localhost")
 	secretFiles := map[string]*string{"password": &c.Password, "password-hash": &c.PasswordHash, "secret": &c.Secret, "secret-key": &c.SecretKey}
 	fileFlags := map[string]*string{}
 	for name := range secretFiles {
@@ -128,6 +138,20 @@ func Parse(args []string, getenv func(string) string) (*Config, error) {
 	if c.SecretKey != "" && len(c.SecretKey) < 32 {
 		return nil, errors.New("--secret-key must have at least 32 characters, such as the output of openssl rand -hex 32")
 	}
+	for _, p := range list(*proxies) {
+		prefix, err := netip.ParsePrefix(p)
+		if err != nil {
+			addr, aerr := netip.ParseAddr(p)
+			if aerr != nil {
+				return nil, fmt.Errorf("--trusted-proxies: %q is not an IP address or CIDR range", p)
+			}
+			prefix = netip.PrefixFrom(addr.Unmap(), addr.Unmap().BitLen())
+		}
+		c.TrustedProxies = append(c.TrustedProxies, prefix.Masked())
+	}
+	for _, h := range list(*hosts) {
+		c.AllowedHosts = append(c.AllowedHosts, strings.ToLower(strings.TrimSuffix(h, ".")))
+	}
 	if getenv("DROPCATCH_HETZNER_TOKEN") != "" || getenv("DROPCATCH_HETZNER_TOKEN_FILE") != "" {
 		slog.Warn("DROPCATCH_HETZNER_TOKEN is no longer used: Hetzner watches use the token of a Hetzner project added in the settings")
 	}
@@ -140,6 +164,17 @@ func Parse(args []string, getenv func(string) string) (*Config, error) {
 	}
 
 	return c, nil
+}
+
+// list splits a comma-separated flag value.
+func list(s string) []string {
+	var out []string
+	for v := range strings.SplitSeq(s, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func defaultDataDir() string {

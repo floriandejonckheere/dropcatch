@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"testing"
 )
@@ -38,6 +39,13 @@ func TestParse(t *testing.T) {
 		t.Fatalf("DROPCATCH_SECRET_KEY_FILE: %q, %v", c.SecretKey, err)
 	}
 
+	if c, err = Parse([]string{"--data-dir", dir, "--trusted-proxies", "172.16.0.0/12, 10.0.0.1,::ffff:192.0.2.1", "--allowed-hosts", "Dropcatch.Example., other.example"}, func(string) string { return "" }); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(c.TrustedProxies) != "[172.16.0.0/12 10.0.0.1/32 192.0.2.1/32]" || fmt.Sprint(c.AllowedHosts) != "[dropcatch.example other.example]" {
+		t.Fatalf("proxies %v, hosts %v", c.TrustedProxies, c.AllowedHosts)
+	}
+
 	bad := [][]string{
 		{"--data-dir", ""},
 		{"--data-dir", dir, "--username", "admin"},
@@ -48,6 +56,7 @@ func TestParse(t *testing.T) {
 		{"--data-dir", dir, "--apprise", dir + "/missing"},
 		{"--data-dir", dir, "--secret-key", "too-short"},
 		{"--data-dir", dir, "--hetzner-token", "removed"},
+		{"--data-dir", dir, "--trusted-proxies", "traefik"},
 	}
 	for _, args := range bad {
 		if _, err := Parse(args, func(string) string { return "" }); err == nil {

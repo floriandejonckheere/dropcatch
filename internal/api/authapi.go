@@ -36,7 +36,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	cookie, err := s.auth.Login(auth.ClientIP(r), req.Username, req.Password, isSecure(r))
+	cookie, err := s.auth.Login(auth.ClientIP(r, s.cfg.TrustedProxies), req.Username, req.Password, isSecure(r))
 	switch {
 	case errors.Is(err, auth.ErrRateLimited):
 		writeError(w, http.StatusTooManyRequests, err.Error())

@@ -13,10 +13,11 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,9 +30,15 @@ const (
 	CookieName = "dropcatch_session"
 	sessionTTL = 30 * 24 * time.Hour
 
-	// Failed logins allowed per client within failWindow.
+	// Failed logins allowed per client within failWindow. A client is an
+	// IPv4 address or an IPv6 /64, which one subscriber usually has whole.
 	maxFailures = 10
 	failWindow  = 15 * time.Minute
+	// maxClients bounds the clients with recent failures that are
+	// remembered. When that many are, logins from other clients are
+	// refused until some expire: forgetting clients instead would let a
+	// flood of addresses reset their own counts.
+	maxClients = 10000
 )
 
 var ErrRateLimited = errors.New("too many failed login attempts, try again later")
@@ -85,8 +92,9 @@ func New(username, password, passwordHash, secret, dataDir string) (*Auth, error
 func (a *Auth) RequiresUsername() bool { return a.username != "" }
 
 // Login checks credentials for the client at ip, and returns a session cookie.
-func (a *Auth) Login(ip, username, password string, secure bool) (*http.Cookie, error) {
-	if a.limited(ip) {
+func (a *Auth) Login(ip netip.Addr, username, password string, secure bool) (*http.Cookie, error) {
+	client := clientKey(ip)
+	if a.limited(client) {
 		return nil, ErrRateLimited
 	}
 	userOK := subtle.ConstantTimeCompare([]byte(username), []byte(a.username)) == 1
@@ -98,7 +106,7 @@ func (a *Auth) Login(ip, username, password string, secure bool) (*http.Cookie, 
 		passOK = subtle.ConstantTimeCompare(ph[:], pw[:]) == 1
 	}
 	if !userOK || !passOK {
-		a.fail(ip)
+		a.fail(client)
 		return nil, errors.New("invalid credentials")
 	}
 	exp := time.Now().Add(sessionTTL)
@@ -211,42 +219,94 @@ func (a *Auth) saveRevoked() {
 	}
 }
 
-func (a *Auth) limited(ip string) bool {
+func (a *Auth) limited(client string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	recent := a.failures[ip][:0]
-	for _, t := range a.failures[ip] {
+	if _, known := a.failures[client]; !known && len(a.failures) >= maxClients {
+		a.prune()
+		return len(a.failures) >= maxClients
+	}
+	return a.recent(client) >= maxFailures
+}
+
+// recent drops the client's failures that are older than failWindow and
+// returns how many are left. The caller holds a.mu.
+func (a *Auth) recent(client string) int {
+	recent := a.failures[client][:0]
+	for _, t := range a.failures[client] {
 		if time.Since(t) < failWindow {
 			recent = append(recent, t)
 		}
 	}
-	a.failures[ip] = recent
+	a.failures[client] = recent
 	if len(recent) == 0 {
-		delete(a.failures, ip)
+		delete(a.failures, client)
 	}
-	return len(recent) >= maxFailures
+	return len(recent)
 }
 
-func (a *Auth) fail(ip string) {
+// prune forgets the clients without recent failures. The caller holds a.mu.
+func (a *Auth) prune() {
+	for client := range a.failures {
+		a.recent(client)
+	}
+}
+
+func (a *Auth) fail(client string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.failures[ip] = append(a.failures[ip], time.Now())
-	// Bound memory under a flood of distinct addresses.
-	if len(a.failures) > 10000 {
-		for k := range a.failures {
-			delete(a.failures, k)
-			break
+	if _, known := a.failures[client]; !known && len(a.failures) >= maxClients {
+		a.prune()
+		if len(a.failures) >= maxClients {
+			return
 		}
 	}
+	a.failures[client] = append(a.failures[client], time.Now())
 }
 
-// ClientIP returns the remote address of r, without port.
-func ClientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
+// clientKey returns the address the rate limit counts failures by: the
+// IPv4 address, or the /64 of an IPv6 address.
+func clientKey(ip netip.Addr) string {
+	ip = ip.Unmap()
+	if ip.Is6() {
+		p, _ := ip.Prefix(64)
+		return p.String()
 	}
-	return host
+	return ip.String()
+}
+
+// ClientIP returns the address of the client that sent r. When r comes
+// from a trusted proxy, that is the last address in X-Forwarded-For that
+// is not a trusted proxy itself: proxies append the address they received
+// the request from, so the addresses before it may be forged.
+func ClientIP(r *http.Request, trusted []netip.Prefix) netip.Addr {
+	peer, err := netip.ParseAddrPort(r.RemoteAddr)
+	if err != nil {
+		return netip.Addr{}
+	}
+	ip := peer.Addr().Unmap()
+	isTrusted := func(a netip.Addr) bool {
+		return slices.ContainsFunc(trusted, func(p netip.Prefix) bool { return p.Contains(a) })
+	}
+	if !isTrusted(ip) {
+		return ip
+	}
+	var hops []string
+	for _, h := range r.Header.Values("X-Forwarded-For") {
+		hops = append(hops, strings.Split(h, ",")...)
+	}
+	for i := len(hops) - 1; i >= 0; i-- {
+		hop, err := netip.ParseAddr(strings.TrimSpace(hops[i]))
+		if err != nil {
+			// Not an address: what comes before it cannot be trusted.
+			return ip
+		}
+		ip = hop.Unmap()
+		if !isTrusted(ip) {
+			return ip
+		}
+	}
+	return ip
 }
 
 func loadOrCreateSecret(file string) (string, error) {
