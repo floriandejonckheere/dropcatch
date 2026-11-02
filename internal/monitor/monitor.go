@@ -36,8 +36,12 @@ type StockChecker interface {
 	Stock(ctx context.Context, subsidiary, plan string) ([]ovh.Datacenter, error)
 }
 
-type HetznerStock interface {
+// Hetzner reads the stock of server types with the configured token, and
+// lists and creates servers in a project with the project's token.
+type Hetzner interface {
 	Stock(ctx context.Context, plan string) ([]hetzner.Location, error)
+	Servers(ctx context.Context, token, selector string) ([]hetzner.Server, error)
+	Create(ctx context.Context, token string, s hetzner.CreateServer) (hetzner.Server, error)
 }
 
 type Notifier interface {
@@ -64,8 +68,9 @@ type Monitor struct {
 	notify Notifier
 	// Push sends to push targets; nil when push is unavailable.
 	Push Pusher
-	// Hetzner checks Hetzner Cloud server types; nil when not configured.
-	Hetzner HetznerStock
+	// Hetzner checks Hetzner Cloud server types and orders servers; nil
+	// when not configured.
+	Hetzner Hetzner
 
 	// Pause between two checks.
 	Pause time.Duration

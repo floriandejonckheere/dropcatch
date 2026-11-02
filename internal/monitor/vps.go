@@ -72,6 +72,9 @@ func (m *Monitor) checkVPS(ctx context.Context, id string) {
 	default:
 		m.Send(ctx, *msg)
 	}
+	if err == nil {
+		m.order(ctx, updated)
+	}
 }
 
 // stock asks the watch's provider for the stock of its plan in every

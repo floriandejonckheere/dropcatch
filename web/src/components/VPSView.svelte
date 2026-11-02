@@ -74,6 +74,7 @@
           <button class="name" onclick={() => (details = v.id)}>
             <span class="plan ellipsis">
               {v.planName}
+              {#if v.order?.active}<span class="muted-icon order" title="Orders {v.order.quantity - (v.order.servers?.length ?? 0)} when in stock" aria-label="Orders automatically"><Icon name="cart" size={13} /></span>{/if}
               {#if v.muted}<span class="muted-icon" title="Notifications muted" aria-label="Notifications muted"><Icon name="bell-off" size={13} /></span>{/if}
               <span class="code">{planLine(v)}</span>
             </span>
@@ -215,6 +216,10 @@
     margin-left: 2px;
     color: var(--text-3);
     vertical-align: -1px;
+  }
+
+  .muted-icon.order {
+    color: var(--accent-text);
   }
 
   .note {

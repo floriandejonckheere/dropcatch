@@ -1,13 +1,15 @@
 // Package hetzner reads the availability of Hetzner Cloud server types
-// from the Hetzner Cloud API.
+// from the Hetzner Cloud API, and creates servers (order.go).
 //
-// The API needs a token, from any project; a read-only one is enough.
+// The API needs a token. For availability, any project's will do, and a
+// read-only one is enough.
 // GET /server_types lists each server type with its CPU type (shared or
 // dedicated), architecture (x86 or arm), prices, and the locations that
 // offer it, each with "available": whether it can be ordered there now.
 package hetzner
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -122,38 +124,72 @@ func (c *Client) get(ctx context.Context, path string, query url.Values, v any) 
 	if c.Token == "" {
 		return ErrNoToken
 	}
+	err := c.do(ctx, c.Token, http.MethodGet, path, query, nil, v)
+	if e, ok := errors.AsType[*APIError](err); ok && e.Status == http.StatusUnauthorized {
+		return errors.New("Hetzner refused the API token (401); check DROPCATCH_HETZNER_TOKEN")
+	}
+	return err
+}
+
+// APIError is an error answer of the Hetzner Cloud API.
+type APIError struct {
+	Status  int
+	Code    string // such as resource_unavailable or token_readonly
+	Message string
+}
+
+func (e *APIError) Error() string {
+	switch {
+	case e.Status == http.StatusTooManyRequests:
+		return "rate limited by Hetzner (429)"
+	case e.Message != "":
+		return fmt.Sprintf("Hetzner: %s (%d)", e.Message, e.Status)
+	}
+	return fmt.Sprintf("Hetzner answered %d", e.Status)
+}
+
+// do sends a request with token and decodes the answer into v.
+func (c *Client) do(ctx context.Context, token, method, path string, query url.Values, body, v any) error {
 	u := strings.TrimSuffix(c.BaseURL, "/") + path
 	if len(query) > 0 {
 		u += "?" + query.Encode()
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	var rd io.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		rd = bytes.NewReader(data)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u, rd)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", c.userAgent)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	res, err := c.HTTP.Do(req)
 	if err != nil {
 		return err
 	}
 	defer res.Body.Close()
-	switch {
-	case res.StatusCode == http.StatusUnauthorized:
-		return errors.New("Hetzner refused the API token (401); check DROPCATCH_HETZNER_TOKEN")
-	case res.StatusCode == http.StatusTooManyRequests:
-		return errors.New("rate limited by Hetzner (429)")
-	case res.StatusCode != http.StatusOK:
+	if res.StatusCode < 200 || res.StatusCode > 299 {
 		var e struct {
 			Error struct {
+				Code    string `json:"code"`
 				Message string `json:"message"`
 			} `json:"error"`
 		}
-		body, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
-		if json.Unmarshal(body, &e) == nil && e.Error.Message != "" {
-			return fmt.Errorf("Hetzner: %s (%d)", e.Error.Message, res.StatusCode)
-		}
-		return fmt.Errorf("Hetzner answered %d", res.StatusCode)
+		data, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
+		_ = json.Unmarshal(data, &e)
+		return &APIError{Status: res.StatusCode, Code: e.Error.Code, Message: e.Error.Message}
+	}
+	if v == nil {
+		return nil
 	}
 	return json.NewDecoder(io.LimitReader(res.Body, 8<<20)).Decode(v)
 }

@@ -5,6 +5,7 @@
   import { app } from '../lib/state.svelte'
   import { toasts } from '../lib/toasts.svelte'
   import IntervalInput from './IntervalInput.svelte'
+  import ProjectsCard from './ProjectsCard.svelte'
 
   let interval = $state(720)
   let vpsInterval = $state(15)
@@ -27,7 +28,7 @@
     reset()
   })
 
-  const limits = $derived(session.config?.limits ?? { minInterval: 5, maxInterval: 10080, minVPSInterval: 1, maxVPSInterval: 10080, minStockInterval: 1, maxStockInterval: 60, minTimeout: 5, maxTimeout: 120 })
+  const limits = $derived(session.config?.limits ?? { minInterval: 5, maxInterval: 10080, minVPSInterval: 1, maxVPSInterval: 10080, minStockInterval: 1, maxStockInterval: 60, minTimeout: 5, maxTimeout: 120, maxOrder: 20 })
   const dirty = $derived(
     interval !== app.settings.interval ||
       vpsInterval !== app.settings.vpsInterval ||
@@ -112,6 +113,10 @@
       <button class="pill primary" type="submit" disabled={!dirty || busy}>Save</button>
     </div>
   </form>
+
+  {#if session.config?.hetzner}
+    <ProjectsCard />
+  {/if}
 
   <section class="about">
     <p class="muted">

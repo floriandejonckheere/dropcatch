@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -47,6 +48,21 @@ func (fakeOVH) Stock(_ context.Context, sub, plan string) ([]ovh.Datacenter, err
 type fakeHetzner struct{ token bool }
 
 func (f fakeHetzner) Configured() bool { return f.token }
+
+func (fakeHetzner) CheckProjectToken(_ context.Context, token string) error {
+	if token != "rw" {
+		return errors.New("the token is read-only: create one with the Read & Write permission")
+	}
+	return nil
+}
+
+func (fakeHetzner) SSHKeys(context.Context, string) ([]hetzner.SSHKey, error) {
+	return []hetzner.SSHKey{{ID: 1, Name: "laptop"}}, nil
+}
+
+func (fakeHetzner) Images(_ context.Context, _, arch string) ([]hetzner.Image, error) {
+	return []hetzner.Image{{ID: 7, Name: "debian-13-" + arch}}, nil
+}
 
 func (fakeHetzner) Plans(context.Context) (hetzner.Catalog, error) {
 	return hetzner.Catalog{Currency: "EUR", Plans: []hetzner.Plan{{Code: "cax11", Name: "CAX11", CPUType: "shared", Architecture: "arm"}}}, nil
@@ -464,5 +480,87 @@ func TestIntervals(t *testing.T) {
 	}
 	if ts.store.Snapshot().VPSWatch(v.ID).Interval != 30 {
 		t.Fatal("rejected interval was saved")
+	}
+}
+
+func TestOrder(t *testing.T) {
+	ts := newServer(t, "")
+	var res struct{ Error string }
+	if code := ts.do("POST", "/api/hetzner/projects", map[string]any{"name": "Prod", "token": "ro"}, &res); code != http.StatusBadRequest || !strings.Contains(res.Error, "read-only") {
+		t.Fatalf("add a project with a read-only token: %d %+v", code, res)
+	}
+	var p projectView
+	if code := ts.do("POST", "/api/hetzner/projects", map[string]any{"name": " Prod ", "token": "rw"}, &p); code != http.StatusOK || p.Name != "Prod" || p.Token != "…rw" {
+		t.Fatalf("add project: %d %+v", code, p)
+	}
+	// The token is never sent back.
+	var state struct{ Projects []map[string]any }
+	ts.do("GET", "/api/state", nil, &state)
+	if len(state.Projects) != 1 || state.Projects[0]["token"] != "…rw" {
+		t.Fatalf("state projects %+v", state.Projects)
+	}
+	var opts struct {
+		SSHKeys []hetzner.SSHKey
+		Images  []hetzner.Image
+	}
+	if code := ts.do("GET", "/api/hetzner/projects/"+p.ID+"/options?architecture=arm", nil, &opts); code != http.StatusOK || opts.Images[0].Name != "debian-13-arm" || len(opts.SSHKeys) != 1 {
+		t.Fatalf("options: %d %+v", code, opts)
+	}
+
+	order := map[string]any{"active": true, "project": p.ID, "location": "fsn1", "quantity": 2, "image": map[string]any{"id": 7, "name": "debian-13"}, "sshKeys": []map[string]any{{"id": 1, "name": "laptop"}}}
+	var v store.VPS
+	add := map[string]any{"provider": "hetzner", "plan": "cax11", "planName": "CAX11", "datacenters": []string{"fsn1"}, "order": order}
+	if code := ts.do("POST", "/api/vps", add, &v); code != http.StatusOK || v.Order == nil || !v.Order.Active || v.Order.Name != "cax11" || v.Order.Batch == "" || v.Order.Quantity != 2 {
+		t.Fatalf("add with order: %d %+v", code, v.Order)
+	}
+	batch := v.Order.Batch
+	for _, bad := range []map[string]any{
+		{"quantity": 0}, {"quantity": 21}, {"project": "nope"}, {"sshKeys": []any{}}, {"image": map[string]any{"id": 0}}, {"name": "Web_1"},
+	} {
+		o := maps.Clone(order)
+		maps.Copy(o, bad)
+		if code := ts.do("PATCH", "/api/vps/"+v.ID, map[string]any{"order": o}, nil); code != http.StatusBadRequest {
+			t.Errorf("order %v: %d", bad, code)
+		}
+	}
+	// OVH has no orders.
+	ovhAdd := map[string]any{"subsidiary": "FR", "plan": "vps-2025-model1", "order": order}
+	if code := ts.do("POST", "/api/vps", ovhAdd, &res); code != http.StatusBadRequest || !strings.Contains(res.Error, "Hetzner") {
+		t.Fatalf("OVH order: %d %+v", code, res)
+	}
+
+	// A running order keeps its round when changed; stopped and started
+	// again, it begins a new one.
+	_ = ts.store.Update(func(s *store.State) error {
+		s.VPSWatch(v.ID).Order.Servers = []store.Ordered{{ID: 1, Name: "cax11-1"}}
+		return nil
+	})
+	order["quantity"] = 3
+	if ts.do("PATCH", "/api/vps/"+v.ID, map[string]any{"order": order}, &v); v.Order.Batch != batch || len(v.Order.Servers) != 1 || v.Order.Quantity != 3 {
+		t.Fatalf("changed order: %+v", v.Order)
+	}
+	order["active"] = false
+	if ts.do("PATCH", "/api/vps/"+v.ID, map[string]any{"order": order}, &v); v.Order.Active || len(v.Order.Servers) != 1 {
+		t.Fatalf("stopped order: %+v", v.Order)
+	}
+	order["active"] = true
+	v = store.VPS{ID: v.ID}
+	if ts.do("PATCH", "/api/vps/"+v.ID, map[string]any{"order": order}, &v); !v.Order.Active || v.Order.Batch == batch || len(v.Order.Servers) != 0 {
+		t.Fatalf("restarted order: %+v", v.Order)
+	}
+
+	// A project in use cannot be removed.
+	if code := ts.do("DELETE", "/api/hetzner/projects/"+p.ID, nil, &res); code != http.StatusConflict || !strings.Contains(res.Error, "CAX11 orders servers") {
+		t.Fatalf("remove project in use: %d %+v", code, res)
+	}
+	v = store.VPS{ID: v.ID}
+	if ts.do("PATCH", "/api/vps/"+v.ID, map[string]any{"order": nil}, &v); v.Order != nil {
+		t.Fatalf("removed order: %+v", v.Order)
+	}
+	if code := ts.do("PATCH", "/api/hetzner/projects/"+p.ID, map[string]any{"name": "Staging"}, nil); code != http.StatusOK || ts.store.Snapshot().Projects[0].Name != "Staging" {
+		t.Fatalf("rename project: %d", code)
+	}
+	if code := ts.do("DELETE", "/api/hetzner/projects/"+p.ID, nil, nil); code != http.StatusOK || len(ts.store.Snapshot().Projects) != 0 {
+		t.Fatalf("remove project: %d", code)
 	}
 }

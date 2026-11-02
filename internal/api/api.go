@@ -49,6 +49,9 @@ type Hetzner interface {
 	Configured() bool
 	Plans(ctx context.Context) (hetzner.Catalog, error)
 	Stock(ctx context.Context, plan string) ([]hetzner.Location, error)
+	CheckProjectToken(ctx context.Context, token string) error
+	SSHKeys(ctx context.Context, token string) ([]hetzner.SSHKey, error)
+	Images(ctx context.Context, token, arch string) ([]hetzner.Image, error)
 }
 
 // New wires the server to the monitor's change callbacks.
@@ -86,6 +89,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/ovh/stock", s.handleOVHStock)
 	mux.HandleFunc("GET /api/hetzner/plans", s.handleHetznerPlans)
 	mux.HandleFunc("GET /api/hetzner/stock", s.handleHetznerStock)
+	mux.HandleFunc("POST /api/hetzner/projects", s.handleProjectAdd)
+	mux.HandleFunc("PATCH /api/hetzner/projects/{id}", s.handleProjectEdit)
+	mux.HandleFunc("DELETE /api/hetzner/projects/{id}", s.handleProjectRemove)
+	mux.HandleFunc("GET /api/hetzner/projects/{id}/options", s.handleProjectOptions)
 	mux.HandleFunc("POST /api/vps", s.handleVPSAdd)
 	mux.HandleFunc("PATCH /api/vps/{id}", s.handleVPSEdit)
 	mux.HandleFunc("DELETE /api/vps/{id}", s.handleVPSRemove)
@@ -129,6 +136,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"maxStockInterval": store.MaxStockInterval,
 			"minTimeout":       store.MinTimeout,
 			"maxTimeout":       store.MaxTimeout,
+			"maxOrder":         maxOrder,
 		},
 		"auth": map[string]bool{
 			"required":      s.auth != nil,
@@ -145,6 +153,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		"domains":  views(st.Domains),
 		"vps":      st.VPS,
 		"targets":  st.Targets,
+		"projects": projectViews(st.Projects),
 		"settings": st.Settings,
 		"checking": s.monitor.Checking(),
 	})
@@ -161,7 +170,7 @@ func (s *Server) update(w http.ResponseWriter, fn func(*store.State) error) bool
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not found")
-	case errors.Is(err, store.ErrExists):
+	case errors.Is(err, store.ErrExists), errors.Is(err, store.ErrInUse):
 		writeError(w, http.StatusConflict, err.Error())
 	default:
 		slog.Error("could not save state", "err", err)

@@ -68,6 +68,23 @@
       {v.muted ? 'Muted: checked, but no notifications are sent' : 'On'}
       <button class="link" onclick={() => vpsActions.setMuted(v, !v.muted)}>{v.muted ? 'Unmute' : 'Mute'}</button>
     </dd>
+    {#if v.order}
+      {@const o = v.order}
+      {@const made = o.servers ?? []}
+      {@const where = o.location ? (v.stock?.find((s) => s.code === o.location)?.name ?? o.location) : 'the first watched location in stock'}
+      <dt>Auto-order</dt>
+      <dd>
+        {#if o.active}
+          {o.quantity - made.length} × {v.planName} in {where}, project {app.projects.find((p) => p.id === o.project)?.name ?? 'removed'}
+        {:else if made.length >= o.quantity}
+          Done
+        {:else}
+          Off
+        {/if}
+        {#if made.length}<span class="muted">· created {made.map((s) => s.name).join(', ')}</span>{/if}
+        {#if o.error}<span class="order-error">{o.active ? 'Last attempt failed' : 'Stopped'}: {o.error}</span>{/if}
+      </dd>
+    {/if}
     <dt>Watching since</dt>
     <dd>{date(v.added)}</dd>
     {#if v.note}
@@ -189,6 +206,12 @@
 
   .note {
     white-space: pre-wrap;
+  }
+
+  .order-error {
+    display: block;
+    color: var(--danger);
+    overflow-wrap: anywhere;
   }
 
   h3 {

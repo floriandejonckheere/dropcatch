@@ -1,12 +1,13 @@
 <script lang="ts">
   import { untrack } from 'svelte'
-  import { api, type Catalog, type Plan, type Provider, type Region, type Stock, type VPS } from '../lib/api'
+  import { api, type Catalog, type OrderInput, type Plan, type Provider, type Region, type Stock, type VPS } from '../lib/api'
   import { minutes, regionLabel } from '../lib/format'
   import { session } from '../lib/session.svelte'
   import { app } from '../lib/state.svelte'
   import { toasts } from '../lib/toasts.svelte'
   import { family, place, planLine, planSummary, providerName } from '../lib/vps'
   import Modal from './Modal.svelte'
+  import OrderFields from './OrderFields.svelte'
   import OwnInterval from './OwnInterval.svelte'
 
   let { watch, onclose }: { watch: Partial<VPS>; onclose: () => void } = $props()
@@ -23,6 +24,12 @@
   let notify = $state(!initial.muted)
   let any = $state(!initial.datacenters?.length)
   let picked = $state<string[]>(initial.datacenters ?? [])
+  let ordering = $state(!!initial.order?.active)
+  let order = $state<OrderInput>(
+    initial.order
+      ? (({ active, project, location, quantity, image, sshKeys, name }) => ({ active, project, location: location ?? '', quantity, image, sshKeys, name }))(initial.order)
+      : { active: false, project: '', location: '', quantity: 1, image: { id: 0, name: '' }, sshKeys: [], name: '' },
+  )
 
   let catalog = $state<Catalog | null>(null)
   let catalogError = $state('')
@@ -120,10 +127,12 @@
     busy = true
     error = ''
     const datacenters = any ? [] : picked
+    // Turning the order off keeps it, with the servers it created.
+    const orderInput = hetzner && (ordering || initial.order) ? { ...order, name: order.name.trim() || plan.trim(), active: ordering } : undefined
     try {
       const v = editing
-        ? await api.editVPS(initial.id!, { datacenters, note, interval, muted: !notify })
-        : await api.addVPS({ provider, subsidiary: hetzner ? undefined : subsidiary, plan: plan.trim(), planName, datacenters, note, interval, muted: !notify })
+        ? await api.editVPS(initial.id!, { datacenters, note, interval, muted: !notify, order: orderInput })
+        : await api.addVPS({ provider, subsidiary: hetzner ? undefined : subsidiary, plan: plan.trim(), planName, datacenters, note, interval, muted: !notify, order: orderInput })
       // The first check can finish, and arrive as an event, before this
       // response: keep that newer version.
       if (editing || !app.vps.some((x) => x.id === v.id)) app.upsertVPS(v)
@@ -269,6 +278,10 @@
         Notify me about this VPS
       </label>
       {#if !notify}<p class="hint">It is still checked and its stock history kept, but no notifications are sent.</p>{/if}
+      {#if hetzner}
+        {@const p = catalog?.plans.find((x) => x.code === plan)}
+        <OrderFields bind:enabled={ordering} bind:order current={initial.order} plan={plan.trim()} architecture={p?.architecture} {stock} price={p?.price} />
+      {/if}
     {/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}
   </form>

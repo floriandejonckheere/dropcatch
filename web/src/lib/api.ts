@@ -75,6 +75,51 @@ export interface VPS {
   history?: Change[]
   /** Newest first, for every datacenter, watched or not. */
   periods?: Period[]
+  /** Servers to create when in stock (Hetzner only). */
+  order?: Order
+}
+
+/** A Hetzner resource by ID, with its name to show. */
+export interface NamedID {
+  id: number
+  name: string
+}
+
+export interface Ordered {
+  id: number
+  name: string
+  location: string
+  created: string
+}
+
+/** Servers a Hetzner watch creates when its server type is in stock. */
+export interface Order {
+  /** Orders at the next check with stock; off when done, stopped or refused. */
+  active: boolean
+  project: string
+  /** Location code; empty for the first watched location with stock. */
+  location?: string
+  quantity: number
+  image: NamedID
+  sshKeys: NamedID[]
+  /** Servers are named name-1, name-2, … */
+  name: string
+  /** Created since the order was last started. */
+  servers?: Ordered[]
+  /** Why the last attempt failed. */
+  error?: string
+  tried?: string
+}
+
+export type OrderInput = Pick<Order, 'active' | 'project' | 'location' | 'quantity' | 'image' | 'sshKeys' | 'name'>
+
+/** A Hetzner Cloud project to order servers in, by its API token. */
+export interface Project {
+  id: string
+  name: string
+  /** The last characters of the token. */
+  token: string
+  added: string
 }
 
 export interface Plan {
@@ -130,6 +175,7 @@ export interface State {
   domains: Domain[]
   vps: VPS[]
   targets: Target[]
+  projects: Project[]
   settings: Settings
   checking: string[]
 }
@@ -151,6 +197,7 @@ export interface ServerConfig {
     maxStockInterval: number
     minTimeout: number
     maxTimeout: number
+    maxOrder: number
   }
   auth: { required: boolean; username: boolean; authenticated: boolean }
 }
@@ -215,9 +262,25 @@ export const api = {
     request<{ datacenters: Stock[] }>('GET', `ovh/stock?subsidiary=${enc(subsidiary)}&plan=${enc(plan)}`),
   hetznerPlans: () => request<Catalog>('GET', 'hetzner/plans'),
   hetznerStock: (plan: string) => request<{ datacenters: Stock[] }>('GET', `hetzner/stock?plan=${enc(plan)}`),
-  addVPS: (v: { provider: Provider; subsidiary?: string; plan: string; planName: string; datacenters: string[]; note: string; interval?: number; muted?: boolean }) => request<VPS>('POST', 'vps', v),
-  /** interval 0 uses the setting for all VPS. */
-  editVPS: (id: string, patch: { datacenters?: string[]; note?: string; paused?: boolean; muted?: boolean; interval?: number }) => request<VPS>('PATCH', `vps/${enc(id)}`, patch),
+  hetznerOptions: (project: string, architecture: string) =>
+    request<{ sshKeys: NamedID[]; images: (NamedID & { description: string })[] }>('GET', `hetzner/projects/${enc(project)}/options?architecture=${enc(architecture)}`),
+  addProject: (p: { name: string; token: string }) => request<Project>('POST', 'hetzner/projects', p),
+  editProject: (id: string, patch: { name?: string; token?: string }) => request<{ ok: boolean }>('PATCH', `hetzner/projects/${enc(id)}`, patch),
+  removeProject: (id: string) => request<{ ok: boolean }>('DELETE', `hetzner/projects/${enc(id)}`),
+  addVPS: (v: {
+    provider: Provider
+    subsidiary?: string
+    plan: string
+    planName: string
+    datacenters: string[]
+    note: string
+    interval?: number
+    muted?: boolean
+    order?: OrderInput | null
+  }) => request<VPS>('POST', 'vps', v),
+  /** interval 0 uses the setting for all VPS; order null removes the order. */
+  editVPS: (id: string, patch: { datacenters?: string[]; note?: string; paused?: boolean; muted?: boolean; interval?: number; order?: OrderInput | null }) =>
+    request<VPS>('PATCH', `vps/${enc(id)}`, patch),
   removeVPS: (id: string) => request<{ ok: boolean }>('DELETE', `vps/${enc(id)}`),
   checkVPS: (id: string) => request<{ ok: boolean }>('POST', `vps/${enc(id)}/check`),
 

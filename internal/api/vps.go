@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"regexp"
@@ -120,14 +121,15 @@ func cleanDatacenters(codes []string) ([]string, error) {
 
 func (s *Server) handleVPSAdd(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Provider    string   `json:"provider"`
-		Subsidiary  string   `json:"subsidiary"`
-		Plan        string   `json:"plan"`
-		PlanName    string   `json:"planName"`
-		Datacenters []string `json:"datacenters"`
-		Note        string   `json:"note"`
-		Interval    int      `json:"interval"`
-		Muted       bool     `json:"muted"`
+		Provider    string          `json:"provider"`
+		Subsidiary  string          `json:"subsidiary"`
+		Plan        string          `json:"plan"`
+		PlanName    string          `json:"planName"`
+		Datacenters []string        `json:"datacenters"`
+		Note        string          `json:"note"`
+		Interval    int             `json:"interval"`
+		Muted       bool            `json:"muted"`
+		Order       json.RawMessage `json:"order"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -177,6 +179,11 @@ func (s *Server) handleVPSAdd(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	order, _, err := decodeOrder(req.Order)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	var v store.VPS
 	if !s.update(w, func(st *store.State) error {
 		p, err := st.AddVPS(store.VPS{
@@ -185,6 +192,11 @@ func (s *Server) handleVPSAdd(w http.ResponseWriter, r *http.Request) {
 		}, time.Now().UTC())
 		if err != nil {
 			return err
+		}
+		if order != nil {
+			if err := setOrder(st, p, order); err != nil {
+				return err
+			}
 		}
 		v = *p
 		return nil
@@ -198,13 +210,19 @@ func (s *Server) handleVPSAdd(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleVPSEdit(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Datacenters *[]string `json:"datacenters"`
-		Note        *string   `json:"note"`
-		Paused      *bool     `json:"paused"`
-		Muted       *bool     `json:"muted"`
-		Interval    *int      `json:"interval"` // 0 for the setting
+		Datacenters *[]string       `json:"datacenters"`
+		Note        *string         `json:"note"`
+		Paused      *bool           `json:"paused"`
+		Muted       *bool           `json:"muted"`
+		Interval    *int            `json:"interval"` // 0 for the setting
+		Order       json.RawMessage `json:"order"`    // null removes it
 	}
 	if !decode(w, r, &req) {
+		return
+	}
+	order, setsOrder, err := decodeOrder(req.Order)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	var v store.VPS
@@ -243,13 +261,23 @@ func (s *Server) handleVPSEdit(w http.ResponseWriter, r *http.Request) {
 			}
 			p.Interval = *req.Interval
 		}
+		if setsOrder {
+			if err := setOrder(st, p, order); err != nil {
+				return err
+			}
+		}
 		v = *p
 		return nil
 	}) {
 		return
 	}
 	s.events.publish("vps", v)
-	s.monitor.Wake()
+	if setsOrder && v.Order != nil && v.Order.Active && !v.Paused {
+		// Order at once when it is in stock now.
+		s.monitor.Check(monitor.VPSKey(v.ID))
+	} else {
+		s.monitor.Wake()
+	}
 	writeJSON(w, v)
 }
 

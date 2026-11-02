@@ -64,6 +64,8 @@ It follows the structure of [Wavr](https://github.com/floriandejonckheere/wavr):
 - Availability comes from `GET /v1/server_types?name=…`, whose `locations` list each location that offers the type with `available`. Hetzner added that field in April 2026 and removed the datacenter endpoints (which had `server_types.available`) in October 2026. A location whose `deprecation.unavailable_after` has passed is not offered anymore and is left out. Hetzner calls `available` an indication, not a guarantee.
 - Location names and regions come from `GET /v1/locations` (cached for a day): the city (without the US state) and country, and the region from the network zone (`eu-central` Europe, `us-east`/`us-west` North America, `ap-southeast` Asia-Pacific), so new locations appear without a code change.
 - Plans for the form come from all server types (cached for an hour) that some location still offers, grouped by `cpu_type` (shared, dedicated) and `architecture` (x86, arm) and ordered by series and number within a group (cx22, cx32, then cpx11, …), with the lowest monthly net price over the locations that offer them. Hetzner has no x86 vendor field, so Intel and AMD types are both listed as x86 (amd64).
+- **Orders.** A Hetzner watch can have an order: a project, an optional location (otherwise the first watched location with stock), a quantity, a server name, an image (by ID: system images have one ID per architecture) and SSH keys (by ID). After a successful check that finds stock where the order wants it, still within the queue, the monitor lists the project's servers labelled `dropcatch=<watch>` (one request), counts those of the current round (`dropcatch-batch=<batch>`, a random ID set when the order is started), and creates the missing ones one at a time with `POST /v1/servers` (`start_after_create`), named `<name>-<n>` with the lowest numbers not yet used. Each created server is saved at once. Errors that may pass (`resource_unavailable`, `placement_error`, rate limits, `5xx`, no answer) leave the order active for the next check with stock; others (`token_readonly`, `forbidden`, `resource_limit_exceeded`, `invalid_input`, `uniqueness_error`, …) stop it, with a failure notification. Successful orders are notified even when the watch is muted. Restarting a finished or stopped order begins a new round; changing a running one keeps its servers.
+- **Projects.** A Hetzner token belongs to one project, so a project is a name and a Read & Write token, stored in the state file (like Apprise URLs) and never sent to the UI, which only sees its last characters. Adding one checks the token: `GET /v1/ssh_keys` must succeed, and `POST /v1/servers` with an empty body must be refused as invalid input (a read-only token is refused as `token_readonly` first), so nothing is created. A project used by an order cannot be removed.
 - The API needs a token (`--hetzner-token`, a deployment secret like the password, with a `-file` variant). Without one, Hetzner watches cannot be added, and existing ones fail their checks with an explanation (and, as any failed check, do not notify). The order link is the Hetzner Console, which has no link to a server type.
 
 ### 3.4 Scheduling
@@ -128,8 +130,8 @@ All endpoints except `config`, `login` and `logout` require a session when a pas
 |---|---|
 | `GET /api/config` | Version, whether Apprise is installed, the VAPID public key for push, setting limits, login state |
 | `POST /api/login`, `POST /api/logout` | Session cookie |
-| `GET /api/state` | Domains, VPS watches, targets, settings and the keys being checked |
-| `GET /api/events` | SSE: `domain`, `domains`, `removed`, `vps`, `vpsRemoved`, `targets`, `settings`, `checking` |
+| `GET /api/state` | Domains, VPS watches, targets, Hetzner projects (without their tokens), settings and the keys being checked |
+| `GET /api/events` | SSE: `domain`, `domains`, `removed`, `vps`, `vpsRemoved`, `targets`, `projects`, `settings`, `checking` |
 | `POST /api/domains` | Add domains: `{names, note, interval}` (`interval` optional, in minutes); names are separated by spaces, commas or newlines. Returns `{added, failed}` |
 | `PATCH /api/domains/{name}` | Change `note`, `paused` or `interval` (minutes; 0 for the setting) |
 | `DELETE /api/domains/{name}` | Stop watching a domain |
@@ -138,9 +140,13 @@ All endpoints except `config`, `login` and `logout` require a session when a pas
 | `GET /api/ovh/plans?subsidiary=` | VPS plans of an OVH shop: `{currency, plans}` |
 | `GET /api/hetzner/plans` | Hetzner Cloud server types: `{currency, plans}`, with `cpuType` and `architecture` |
 | `GET /api/hetzner/stock?plan=` | Locations offering a server type, with their region and current availability |
+| `POST /api/hetzner/projects` | Add a project: `{name, token}`; the token must be able to create servers |
+| `PATCH /api/hetzner/projects/{id}` | Change `name` or `token` |
+| `DELETE /api/hetzner/projects/{id}` | Remove a project; `409` while an order uses it |
+| `GET /api/hetzner/projects/{id}/options?architecture=` | The project's SSH keys and the system images for `x86` or `arm`, for the order form |
 | `GET /api/ovh/stock?subsidiary=&plan=` | Datacenters offering a plan, with their region and current stock |
-| `POST /api/vps` | Watch a VPS: `{provider, subsidiary, plan, planName, datacenters, note, interval, muted}`; `provider` is `ovh` (default) or `hetzner` (no subsidiary, `datacenters` are locations); `datacenters` empty for any. `409` for an identical watch |
-| `PATCH /api/vps/{id}` | Change `datacenters`, `note`, `paused`, `muted` (checked, but no notifications) or `interval` (minutes; 0 for the setting) |
+| `POST /api/vps` | Watch a VPS: `{provider, subsidiary, plan, planName, datacenters, note, interval, muted}`; `provider` is `ovh` (default) or `hetzner` (no subsidiary, `datacenters` are locations); `datacenters` empty for any; Hetzner watches can have an `order`. `409` for an identical watch |
+| `PATCH /api/vps/{id}` | Change `datacenters`, `note`, `paused`, `muted` (checked, but no notifications), `interval` (minutes; 0 for the setting) or `order` (`{active, project, location, quantity, image: {id, name}, sshKeys: [{id, name}], name}`, or `null` to remove it) |
 | `DELETE /api/vps/{id}` | Stop watching |
 | `POST /api/vps/{id}/check` | Check now (queued; the result arrives as an event) |
 | `POST /api/targets` | Add a target: `{name, url, enabled}`, or `{name, type: "push", push: {endpoint, p256dh, auth}}` for this browser (replaces its earlier target) |
@@ -156,7 +162,9 @@ All endpoints except `config`, `login` and `logout` require a session when a pas
 - **Sequential checks.** Simpler, and gentle on registries and OVH; a few dozen domains take about a minute per round.
 - **One schedule for domains and VPS, with separate intervals.** They share the queue and notification targets. Domains need a few checks a day and VPS several an hour, so each has its own interval setting, and each item can override it. A VPS in stock is checked at a shorter interval still, until it sells out.
 - **OVH's public API, without credentials.** Stock and catalog are public; an OVH API key would add setup for nothing.
-- **A token for Hetzner, from the environment.** Hetzner has no public availability endpoint. The token is a deployment secret like the password, so it is a flag or environment variable rather than a setting in the UI and the state file; read-only tokens are enough, as Dropcatch never changes anything in the project.
+- **A token for Hetzner, from the environment.** Hetzner has no public availability endpoint. The token is a deployment secret like the password, so it is a flag or environment variable rather than a setting in the UI and the state file; read-only tokens are enough for checks.
+- **Ordering tokens in the UI, one per project.** Orders need write access to the project the servers go in, and a token belongs to one project, so choosing a project means choosing a token. Several projects can be added from the UI; the read-only token for checks stays a deployment secret. Write access is checked with a request that cannot create anything, so adding a project costs nothing.
+- **Orders are idempotent by label, not by request.** Hetzner has no idempotency key, so a create request whose answer is lost could otherwise be repeated; labelling the servers of each round and counting them first means a server is never ordered twice, at the cost of one list request per attempt.
 - **Notify on transitions only.** An available domain is announced once, not on every check.
 - **Apprise CLI rather than a library.** Dropcatch stays a Go binary; the image adds Python and Apprise.
 - **Web Push implemented in the standard library.** The encryption and VAPID signature are about two hundred lines over `crypto/ecdh`, `crypto/hkdf` and `crypto/ecdsa`, tested against the example in RFC 8291; a dependency would add more code than it saves. Push is a target type rather than an Apprise URL, because the subscription is created by the browser and has to be renewed from it.

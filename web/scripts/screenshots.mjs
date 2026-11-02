@@ -35,7 +35,12 @@ const eu = ['eu-central-waw', 'eu-south-mil', 'eu-west-gra', 'eu-west-lim', 'eu-
 await api('POST', 'vps', { subsidiary: 'FR', plan: 'vps-2025-model1', planName: 'VPS-1', datacenters: eu, note: 'Cheapest one', interval: 5 })
 await api('POST', 'vps', { subsidiary: 'FR', plan: 'vps-2025-model2', planName: 'VPS-2', datacenters: ['ca-east-bhs'] })
 await api('POST', 'vps', { subsidiary: 'FR', plan: 'vps-2025-model4', planName: 'VPS-4', datacenters: ['eu-west-gra', 'eu-west-rbx'], muted: true })
-await api('POST', 'vps', { provider: 'hetzner', plan: 'cax11', planName: 'CAX11', datacenters: ['fsn1', 'hel1', 'nbg1'], note: 'Arm build runner' })
+// CAX11 is out of stock in Helsinki, so its order waits for a restock.
+const project = await api('POST', 'hetzner/projects', { name: 'Build runners', token: 'screenshot-token-7f3c' })
+await api('POST', 'vps', {
+  provider: 'hetzner', plan: 'cax11', planName: 'CAX11', datacenters: ['fsn1', 'hel1', 'nbg1'], note: 'Arm build runner',
+  order: { active: true, project: project.id, location: 'hel1', quantity: 2, name: 'runner', image: { id: 200, name: 'ubuntu-24.04' }, sshKeys: [{ id: 2, name: 'ci' }] },
+})
 await api('POST', 'vps', { provider: 'hetzner', plan: 'ccx13', planName: 'CCX13', datacenters: [] })
 await api('POST', 'targets', { name: 'Phone (ntfy)', url: 'ntfy://dropcatch-alerts', enabled: true })
 await api('POST', 'targets', { name: 'Telegram', url: 'tgram://123456789:AAF-token/987654', enabled: true })
@@ -107,7 +112,20 @@ await settle(p, 800)
 await p.getByText('Only these:').click()
 await p.locator('label.region-name', { hasText: 'Europe' }).locator('input').check()
 await shot(p, 'vps-form')
-await p.keyboard.press('Escape')
+await p.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click()
+await settle(p, 300)
+
+// The order of CAX11, in its edit dialog.
+await p.locator('button.name', { hasText: 'CAX11' }).click()
+await settle(p, 400)
+await p.getByRole('dialog').getByRole('button', { name: 'Edit' }).click()
+await p.getByRole('dialog').getByText('SSH keys').waitFor()
+await settle(p, 300)
+await p.getByRole('dialog').locator('fieldset', { hasText: 'Order automatically' }).evaluate((e) => e.scrollIntoView({ block: 'end' }))
+await settle(p, 300)
+await shot(p, 'vps-order')
+await p.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click()
+await settle(p, 300)
 
 await open(p, 'notifications')
 await shot(p, 'notifications')

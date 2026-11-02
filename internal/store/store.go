@@ -43,6 +43,7 @@ const periodLimit = 100
 var (
 	ErrNotFound = errors.New("not found")
 	ErrExists   = errors.New("already exists")
+	ErrInUse    = errors.New("in use")
 )
 
 type State struct {
@@ -50,6 +51,8 @@ type State struct {
 	Domains  []Domain `json:"domains"`
 	VPS      []VPS    `json:"vps"`
 	Targets  []Target `json:"targets"`
+	// Hetzner Cloud projects that servers are ordered in.
+	Projects []Project `json:"projects,omitempty"`
 }
 
 type Settings struct {
@@ -234,7 +237,60 @@ type VPS struct {
 	History []Change `json:"history,omitempty"` // newest first
 	// When each datacenter had stock, watched or not, newest first.
 	Periods []Period `json:"periods,omitempty"`
+
+	// Order creates servers when the server type is in stock (Hetzner
+	// only); nil when the watch only notifies.
+	Order *Order `json:"order,omitempty"`
 }
+
+// Project is a Hetzner Cloud project. An API token belongs to one project,
+// so the token chooses where servers are created.
+type Project struct {
+	ID    string    `json:"id"`
+	Name  string    `json:"name"`
+	Token string    `json:"token"` // Read & Write; never sent to the UI
+	Added time.Time `json:"added"`
+}
+
+// Order is what a Hetzner watch orders when its server type is in stock.
+// It stops when Quantity servers were created, or when Hetzner refused an
+// order for a reason that will not go away by itself.
+type Order struct {
+	Active  bool   `json:"active"`
+	Project string `json:"project"` // Project ID
+	// Location to order in; empty for the first watched location with
+	// stock.
+	Location string    `json:"location,omitempty"`
+	Quantity int       `json:"quantity"`
+	Image    NamedID   `json:"image"`
+	SSHKeys  []NamedID `json:"sshKeys"`
+	// Name of the servers, followed by a number: cax11-1, cax11-2.
+	Name string `json:"name"`
+	// Batch is a label on the servers created since the order was last
+	// started, so that a server whose creation was not confirmed (the
+	// answer was lost) is still counted.
+	Batch   string     `json:"batch"`
+	Servers []Ordered  `json:"servers,omitempty"` // created since the order was started
+	Error   string     `json:"error,omitempty"`   // why the last attempt failed
+	Tried   *time.Time `json:"tried,omitempty"`   // last attempt
+}
+
+// NamedID is a Hetzner resource, by ID, with its name to show.
+type NamedID struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+// Ordered is a server created by an order.
+type Ordered struct {
+	ID       int64     `json:"id"`
+	Name     string    `json:"name"`
+	Location string    `json:"location"`
+	Created  time.Time `json:"created"`
+}
+
+// Done reports whether every server of the order was created.
+func (o *Order) Done() bool { return len(o.Servers) >= o.Quantity }
 
 // Period is a time a datacenter had stock. It starts at the first check
 // that saw the stock and ends at the first that did not (End is nil while
@@ -415,6 +471,46 @@ func (s *State) RemoveVPS(id string) error {
 	}
 	return nil
 }
+
+// Project returns the project with the ID, or nil.
+func (s State) Project(id string) *Project {
+	for i := range s.Projects {
+		if s.Projects[i].ID == id {
+			return &s.Projects[i]
+		}
+	}
+	return nil
+}
+
+func (s *State) AddProject(p Project, now time.Time) *Project {
+	p.ID, p.Added = newID(), now
+	s.Projects = append(s.Projects, p)
+	return &s.Projects[len(s.Projects)-1]
+}
+
+// RemoveProject removes a project that no order uses.
+func (s *State) RemoveProject(id string) error {
+	for _, v := range s.VPS {
+		if v.Order != nil && v.Order.Project == id {
+			return inUse(v.PlanName + " orders servers in this project; change or remove its order first")
+		}
+	}
+	n := len(s.Projects)
+	s.Projects = slices.DeleteFunc(s.Projects, func(p Project) bool { return p.ID == id })
+	if len(s.Projects) == n {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// inUse is an ErrInUse that explains itself.
+type inUse string
+
+func (e inUse) Error() string      { return string(e) }
+func (inUse) Is(target error) bool { return target == ErrInUse }
+
+// NewID returns a random ID.
+func NewID() string { return newID() }
 
 func newID() string {
 	b := make([]byte, 6)

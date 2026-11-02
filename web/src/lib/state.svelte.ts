@@ -1,4 +1,4 @@
-import { api, url, type Domain, type Settings, type Target, type VPS } from './api'
+import { api, url, type Domain, type Project, type Settings, type Target, type VPS } from './api'
 
 // The domains, VPS watches, targets and settings, kept current through Server-Sent
 // Events (check results, and changes made in other tabs).
@@ -6,6 +6,7 @@ class AppState {
   domains = $state<Domain[]>([])
   vps = $state<VPS[]>([])
   targets = $state<Target[]>([])
+  projects = $state<Project[]>([])
   settings = $state<Settings>({ interval: 720, vpsInterval: 15, stockInterval: 2, timeout: 20, notifyChanges: true })
   checking = $state<string[]>([])
   loaded = $state(false)
@@ -19,6 +20,7 @@ class AppState {
     this.domains = s.domains
     this.vps = s.vps
     this.targets = s.targets
+    this.projects = s.projects
     this.settings = s.settings
     this.checking = s.checking
     this.loaded = true
@@ -52,6 +54,7 @@ class AppState {
     on<VPS>('vps', (v) => this.upsertVPS(v))
     on<string>('vpsRemoved', (id) => (this.vps = this.vps.filter((v) => v.id !== id)))
     on<Target[]>('targets', (ts) => (this.targets = ts))
+    on<Project[]>('projects', (ps) => (this.projects = ps))
     on<Settings>('settings', (s) => (this.settings = s))
     on<string[]>('checking', (names) => (this.checking = names))
   }

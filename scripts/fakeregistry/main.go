@@ -17,15 +17,20 @@
 // dedicated x86) in the six locations, for any API token. CAX11 is out of
 // stock everywhere (and back in Falkenstein like VPS-1 with
 // --restock-after), and the others are unavailable in some locations.
+// Every token is a project with two SSH keys, which can create servers
+// (kept in memory) except with the token "readonly"; creating one where
+// its type is unavailable fails as at Hetzner.
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"hash/fnv"
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -136,6 +141,104 @@ func main() {
 				100+i, t.name, strings.ToUpper(t.name), t.cores, t.memory, t.disk, strings.Join(prices, ","), t.cpu, t.arch, t.category, strings.Join(locs, ",")))
 		}
 		fmt.Fprintf(w, `{"server_types":[%s],"meta":{"pagination":{"page":1,"per_page":50,"previous_page":null,"next_page":null,"last_page":1,"total_entries":%d}}}`, strings.Join(types, ","), len(types))
+	})
+	// Projects, by token: the servers created in them.
+	var mu sync.Mutex
+	projects := map[string][]map[string]any{}
+	http.HandleFunc("GET /v1/ssh_keys", func(w http.ResponseWriter, r *http.Request) {
+		if hetznerAuth(w, r) {
+			fmt.Fprint(w, `{"ssh_keys":[{"id":1,"name":"laptop","fingerprint":"b7:2f:30:a0"},{"id":2,"name":"ci","fingerprint":"0c:5e:91:7d"}],"meta":{"pagination":{"next_page":null}}}`)
+		}
+	})
+	http.HandleFunc("GET /v1/images", func(w http.ResponseWriter, r *http.Request) {
+		if !hetznerAuth(w, r) {
+			return
+		}
+		base := 100
+		if r.URL.Query().Get("architecture") == "arm" {
+			base = 200
+		}
+		var images []string
+		for i, name := range []string{"ubuntu-24.04", "ubuntu-22.04", "debian-13", "debian-12", "fedora-42", "rocky-10", "alma-10"} {
+			flavor, version, _ := strings.Cut(name, "-")
+			images = append(images, fmt.Sprintf(`{"id":%d,"name":%q,"description":"%s %s","type":"system","status":"available"}`, base+i, name, strings.ToUpper(flavor[:1])+flavor[1:], version))
+		}
+		fmt.Fprintf(w, `{"images":[%s],"meta":{"pagination":{"next_page":null}}}`, strings.Join(images, ","))
+	})
+	http.HandleFunc("GET /v1/servers", func(w http.ResponseWriter, r *http.Request) {
+		if !hetznerAuth(w, r) {
+			return
+		}
+		key, value, _ := strings.Cut(r.URL.Query().Get("label_selector"), "=")
+		mu.Lock()
+		defer mu.Unlock()
+		servers := []map[string]any{}
+		for _, s := range projects[r.Header.Get("Authorization")] {
+			if labels, _ := s["labels"].(map[string]any); key == "" || labels[key] == value {
+				servers = append(servers, s)
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"servers": servers, "meta": map[string]any{"pagination": map[string]any{"next_page": nil}}})
+	})
+	http.HandleFunc("POST /v1/servers", func(w http.ResponseWriter, r *http.Request) {
+		if !hetznerAuth(w, r) {
+			return
+		}
+		fail := func(status int, code, msg string) {
+			w.WriteHeader(status)
+			fmt.Fprintf(w, `{"error":{"code":%q,"message":%q}}`, code, msg)
+		}
+		if r.Header.Get("Authorization") == "Bearer readonly" {
+			fail(http.StatusUnauthorized, "token_readonly", "The token is only allowed to perform GET requests")
+			return
+		}
+		var req struct {
+			Name       string            `json:"name"`
+			ServerType string            `json:"server_type"`
+			Location   string            `json:"location"`
+			Image      int               `json:"image"`
+			Labels     map[string]string `json:"labels"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Name == "" || req.ServerType == "" || req.Image == 0 {
+			fail(http.StatusBadRequest, "invalid_input", "invalid input in fields 'name', 'server_type', 'image'")
+			return
+		}
+		// The same stock as GET /server_types.
+		avail := false
+		for i, t := range hetznerTypes {
+			for j, l := range hetznerLocations {
+				if t.name == req.ServerType && l.code == req.Location {
+					avail = (i+j)%4 != 0
+					if t.name == "cax11" {
+						avail = l.code == "fsn1" && restocked(time.Since(started), *restock, *restockFor)
+					}
+				}
+			}
+		}
+		if !avail {
+			fail(http.StatusPreconditionFailed, "resource_unavailable", "server type "+req.ServerType+" is unavailable in "+req.Location)
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		token := r.Header.Get("Authorization")
+		for _, s := range projects[token] {
+			if s["name"] == req.Name {
+				fail(http.StatusConflict, "uniqueness_error", "server name is already used")
+				return
+			}
+		}
+		labels := map[string]any{}
+		for k, v := range req.Labels {
+			labels[k] = v
+		}
+		server := map[string]any{"id": 4000 + len(projects[token]), "name": req.Name, "labels": labels,
+			"server_type": map[string]any{"name": req.ServerType}, "datacenter": map[string]any{"location": map[string]any{"name": req.Location}}}
+		projects[token] = append(projects[token], server)
+		log.Printf("created server %s (%s) in %s", req.Name, req.ServerType, req.Location)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"server": server, "root_password": nil})
 	})
 	log.Printf("fake registry on http://%s/dns.json", *listen)
 	log.Fatal(http.ListenAndServe(*listen, nil))

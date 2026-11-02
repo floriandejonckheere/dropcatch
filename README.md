@@ -12,6 +12,7 @@ It runs as a single container with a small web UI, for one user behind a passwor
 - **Registration status**: registered, dropping (expired, in the redemption or pending delete period) or available, with the registrar, registration and expiry dates, the registry's status codes and a history of status changes
 - **Watch OVHcloud VPS**: choose the OVH shop (country), a plan from OVH's catalog (with its specifications and price) and any datacenter, whole regions (Europe, North America, Asia-Pacific) or individual datacenters. See the current stock of every datacenter, with a link to order, and when each datacenter had stock, on a timeline and in a table. Mute the notifications of a VPS to keep recording its stock without being told about it.
 - **Watch Hetzner Cloud servers**: any server type, shared or dedicated vCPU, x86 or Arm64 (Ampere), in any location (Falkenstein, Nuremberg, Helsinki, Ashburn, Hillsboro, Singapore) or region, with the same stock view and history. Needs a read-only Hetzner Cloud API token.
+- **Order Hetzner servers automatically**: when a watched server type is in stock, Dropcatch creates the servers for you, in a project you choose (by its Read & Write API token), in a given location or the first watched one with stock, as many as you ask for, with the image and SSH keys you pick, and notifies you of what it created.
 - **Periodic checks** at separate intervals for domains (every 12 hours by default) and VPS (every 15 minutes), each overridable per domain or VPS, and more often (every 2 minutes by default) while a VPS is in stock; one query at a time so that registries and providers do not rate-limit you; check one or everything on demand
 - **Push notifications** to your phone or computer: enable them on the Notifications page of each device, and Dropcatch notifies it when a domain or VPS becomes available, even when the app is closed. No app store, account or third-party service to set up.
 - **Notifications** through any [Apprise URL](https://github.com/caronc/apprise/wiki#notification-services): ntfy, Telegram, Discord, Slack, Pushover, Gotify, e-mail and many more. Send a test from the UI. Optionally also notified when a domain enters its deletion period, is restored by its owner or is registered again, and when a VPS sells out again.
@@ -28,8 +29,8 @@ It runs as a single container with a small web UI, for one user behind a passwor
 | ![Details of a domain in its deletion period](docs/screenshots/details.jpg) | ![Stock of a VPS plan per datacenter and its stock history](docs/screenshots/vps-details.jpg) |
 | **Notification targets** | **Settings** |
 | ![Notification targets](docs/screenshots/notifications.jpg) | ![Settings](docs/screenshots/settings.jpg) |
-| **Light theme** | |
-| ![Domains in the light theme](docs/screenshots/domains-light.jpg) | |
+| **Ordering automatically** | **Light theme** |
+| ![Ordering Hetzner servers when in stock](docs/screenshots/vps-order.jpg) | ![Domains in the light theme](docs/screenshots/domains-light.jpg) |
 
 <p>
   <img src="docs/screenshots/mobile-domains.jpg" alt="Domains on a phone" width="260">
@@ -65,6 +66,15 @@ While a watch is available, it is checked more often (every 2 minutes by default
 Hetzner's API needs a token, but any project's will do, and read-only is enough: create one in the [Hetzner Console](https://console.hetzner.com/) under *Security → API tokens* and pass it as `DROPCATCH_HETZNER_TOKEN` (or in a file with `--hetzner-token-file`). Dropcatch only reads `/server_types` and `/locations`.
 
 Each server type lists the locations that offer it, with whether it can be ordered there now; a watch is **available** when one of its locations can. The form groups the server types by CPU (shared or dedicated vCPU) and architecture (x86, which Hetzner also calls amd64, or Arm64), with their size and lowest monthly price. Server types that Hetzner has retired in a location are not offered there. Hetzner points out that availability is an indication rather than a guarantee: an order can still fail.
+
+#### Ordering automatically
+
+A Hetzner watch can also order its server type as soon as it is in stock:
+
+1. In **Settings → Hetzner projects**, add the project to create the servers in, with an API token of that project with the **Read & Write** permission (a token belongs to one project, so the token chooses the project). Dropcatch checks that the token can create servers, without creating one, and never shows the token again. It is kept in `dropcatch.json`.
+2. In the watch's form, turn on **Create servers when it is in stock** and choose the project, the location (or the first watched location with stock), the number of servers, their name, the image and the SSH keys. At least one SSH key is needed: without one, Hetzner sets a root password that only the creating request sees.
+
+At the first check that sees stock where the order wants it, Dropcatch creates and starts the servers one at a time, named `cax11-1`, `cax11-2`, … (skipping names it used before), and notifies you of them, also when the watch's notifications are muted. If the stock runs out first, it orders the rest at the next check that sees stock. It stops when all servers are created, or when Hetzner refuses an order for a reason that will not go away by itself (a read-only token, a resource limit, a missing image), with a notification. The servers carry the labels `dropcatch=<watch>` and `dropcatch-batch=<round>`, so that a server whose creation was not confirmed (a lost answer) is counted rather than ordered twice. Servers are billed by the hour from their creation: delete the ones you do not need in the Hetzner Console.
 
 ### Checks
 

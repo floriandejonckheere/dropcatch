@@ -1,6 +1,6 @@
 # Working on Dropcatch
 
-Dropcatch is a self-hosted availability monitor for domain names, OVHcloud VPS and Hetzner Cloud servers: a Go server (single binary) that embeds a Svelte 5 web UI, checks domains over RDAP and WHOIS and VPS stock over OVH's public API and the Hetzner Cloud API, and sends notifications through Web Push and the Apprise CLI. Read `README.md` for features and configuration and `docs/DESIGN.md` for architecture and decisions. The structure follows [Wavr](https://github.com/floriandejonckheere/wavr).
+Dropcatch is a self-hosted availability monitor for domain names, OVHcloud VPS and Hetzner Cloud servers (which it can also order when in stock): a Go server (single binary) that embeds a Svelte 5 web UI, checks domains over RDAP and WHOIS and VPS stock over OVH's public API and the Hetzner Cloud API, and sends notifications through Web Push and the Apprise CLI. Read `README.md` for features and configuration and `docs/DESIGN.md` for architecture and decisions. The structure follows [Wavr](https://github.com/floriandejonckheere/wavr).
 
 ## Layout
 
@@ -8,10 +8,10 @@ Dropcatch is a self-hosted availability monitor for domain names, OVHcloud VPS a
 cmd/dropcatch/        entry point
 internal/config       flags and DROPCATCH_* environment variables
 internal/auth         password login, signed session cookies
-internal/store        state (settings, domains, VPS watches, targets) in dropcatch.json
+internal/store        state (settings, domains, VPS watches, targets, Hetzner projects) in dropcatch.json
 internal/lookup       RDAP and WHOIS clients, domain name normalisation
 internal/ovh          OVH VPS stock and plan catalog
-internal/hetzner      Hetzner Cloud server types and their availability
+internal/hetzner      Hetzner Cloud server types, their availability, and creating servers
 internal/notify       Apprise CLI wrapper
 internal/webpush      Web Push (RFC 8291 encryption, VAPID) for push targets
 internal/monitor      scheduler, status changes, notifications
@@ -39,7 +39,8 @@ Run the app locally without network access: `make fakeregistry` in one terminal,
 ## Rules of the codebase
 
 - **Never send a notification on a failed check.** A lookup error keeps the last known status; only status changes notify (see the table in `docs/DESIGN.md`).
-- **Be gentle on registries, OVH and Hetzner.** Domain and VPS checks go through the monitor's single queue, one at a time with a pause in between; do not add parallel or retrying queries. The form's plan and stock lookups (`/api/ovh/*`, `/api/hetzner/*`) are the only provider requests outside it, made on user action.
+- **Be gentle on registries, OVH and Hetzner.** Domain and VPS checks go through the monitor's single queue, one at a time with a pause in between; do not add parallel or retrying queries. The form's plan, stock and project lookups (`/api/ovh/*`, `/api/hetzner/*`) are the only provider requests outside it, made on user action.
+- **Orders spend money.** Hetzner orders run in the monitor's queue after a successful check; never retry a create request within a check, never order without first counting the round's labelled servers, and stop the order (with a notification) on any error that will not pass by itself. Tests use fake APIs only.
 - **VPS providers:** a watch has a `provider` (`ovh` or `hetzner`); provider-specific code stays in `internal/ovh`, `internal/hetzner` and the monitor's `stock` function. In the UI, OVH has *datacenters* and Hetzner *locations* (`place()` in `web/src/lib/vps.ts`).
 - **Push:** the service worker (`web/public/sw.js`) is plain JavaScript served as is; it must never cache `/api/`. Push works only in a secure context: test it on `localhost` with Playwright's `channel: 'chromium'` (new headless mode), which gets real subscriptions; the old headless mode reports notifications as denied.
 - **Never put Apprise URLs on a command line or in logs.** They contain credentials; `notify` passes them in a private temporary file.

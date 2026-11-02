@@ -208,10 +208,41 @@ func TestPush(t *testing.T) {
 	}
 }
 
-type fakeHetzner struct{ locs []hetzner.Location }
+type fakeHetzner struct {
+	locs    []hetzner.Location
+	servers []hetzner.Server // in the project
+	// createErr fails the creation of servers after the first createOK.
+	createOK  int
+	createErr error
+	created   []hetzner.CreateServer
+}
 
 func (f *fakeHetzner) Stock(_ context.Context, plan string) ([]hetzner.Location, error) {
 	return f.locs, nil
+}
+
+func (f *fakeHetzner) Servers(_ context.Context, token, selector string) ([]hetzner.Server, error) {
+	if token != "rw" {
+		return nil, &hetzner.APIError{Status: 401, Code: "unauthorized"}
+	}
+	k, v, _ := strings.Cut(selector, "=")
+	var out []hetzner.Server
+	for _, s := range f.servers {
+		if selector == "" || s.Labels[k] == v {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeHetzner) Create(_ context.Context, token string, c hetzner.CreateServer) (hetzner.Server, error) {
+	if f.createErr != nil && len(f.created) >= f.createOK {
+		return hetzner.Server{}, f.createErr
+	}
+	f.created = append(f.created, c)
+	s := hetzner.Server{ID: int64(100 + len(f.servers)), Name: c.Name, Location: c.Location, Labels: c.Labels}
+	f.servers = append(f.servers, s)
+	return s, nil
 }
 
 func TestHetzner(t *testing.T) {
@@ -243,6 +274,101 @@ func TestHetzner(t *testing.T) {
 	got := n.take()
 	if len(got) != 2 || got[0].title != "CAX11 is available" || !strings.Contains(got[0].body, "Hetzner Cloud CAX11 (cax11) can be ordered in Falkenstein, Germany: https://console.hetzner.com/") {
 		t.Fatalf("sent %+v", got)
+	}
+}
+
+func TestOrder(t *testing.T) {
+	m, st, _, n := setup(t)
+	h := &fakeHetzner{locs: []hetzner.Location{
+		{Code: "fsn1", Name: "Falkenstein, Germany", Region: "europe"},
+		{Code: "hel1", Name: "Helsinki, Finland", Region: "europe"},
+	}}
+	m.Hetzner = h
+	var v *store.VPS
+	_ = st.Update(func(s *store.State) error {
+		p := s.AddProject(store.Project{Name: "Prod", Token: "rw"}, time.Now())
+		v, _ = s.AddVPS(store.VPS{Provider: store.Hetzner, Plan: "cax11", PlanName: "CAX11", Muted: true, Order: &store.Order{
+			Active: true, Project: p.ID, Location: "hel1", Quantity: 3, Name: "cax11", Batch: "b1",
+			Image: store.NamedID{ID: 7, Name: "debian-13"}, SSHKeys: []store.NamedID{{ID: 9, Name: "laptop"}},
+		}}, time.Now())
+		return nil
+	})
+	// A server of an earlier round has the first name, one created by
+	// hand the third; one of this round was created, but its creation was
+	// not confirmed.
+	h.servers = []hetzner.Server{
+		{ID: 1, Name: "cax11-1", Labels: map[string]string{"dropcatch": v.ID, "dropcatch-batch": "b0"}},
+		{ID: 2, Name: "cax11-2", Location: "hel1", Labels: map[string]string{"dropcatch": v.ID, "dropcatch-batch": "b1"}},
+		{ID: 3, Name: "cax11-3"},
+	}
+	ctx := context.Background()
+	order := func() *store.Order { return st.Snapshot().VPSWatch(v.ID).Order }
+
+	// In stock, but not where the order wants it.
+	h.locs[0].Available = true
+	m.check(ctx, VPSKey(v.ID))
+	if len(h.created) != 0 || len(n.take()) != 0 {
+		t.Fatalf("ordered in another location: %+v", h.created)
+	}
+
+	// A paused watch checked on demand does not order.
+	h.locs[1].Available = true
+	_ = st.Update(func(s *store.State) error { s.VPSWatch(v.ID).Paused = true; return nil })
+	m.check(ctx, VPSKey(v.ID))
+	_ = st.Update(func(s *store.State) error { s.VPSWatch(v.ID).Paused = false; return nil })
+	if n.take(); len(h.created) != 0 {
+		t.Fatalf("ordered while paused: %+v", h.created)
+	}
+
+	// One server is created, then the stock runs out: the order goes on
+	// at the next restock, and the stock notifications stay muted.
+	h.locs[1].Available = true
+	h.createOK, h.createErr = 1, &hetzner.APIError{Status: 412, Code: "resource_unavailable", Message: "server type unavailable"}
+	m.check(ctx, VPSKey(v.ID))
+	got := n.take()
+	if len(h.created) != 1 || h.created[0].Name != "cax11-4" || h.created[0].Location != "hel1" || h.created[0].Image != 7 ||
+		h.created[0].SSHKeys[0] != 9 || h.created[0].ServerType != "cax11" || h.created[0].Labels["dropcatch-batch"] != "b1" {
+		t.Fatalf("created %+v", h.created)
+	}
+	if o := order(); !o.Active || len(o.Servers) != 2 || !strings.Contains(o.Error, "server type unavailable") {
+		t.Fatalf("order after a partial round: %+v", o)
+	}
+	if len(got) != 2 || got[0].title != "Ordered 2 of 3 × CAX11" || !strings.Contains(got[0].body, "Created cax11-4 in Helsinki, Finland, in the Hetzner Cloud project Prod. 1 more") {
+		t.Fatalf("sent %+v", got)
+	}
+
+	h.createErr = nil
+	m.check(ctx, VPSKey(v.ID))
+	got = n.take()
+	if o := order(); o.Active || len(o.Servers) != 3 || o.Error != "" || len(h.created) != 2 || h.created[1].Name != "cax11-5" {
+		t.Fatalf("order when done: %+v, created %+v", o, h.created)
+	}
+	if len(got) != 2 || got[0].title != "Ordered 1 × CAX11" {
+		t.Fatalf("sent %+v", got)
+	}
+	// Done: nothing more is ordered.
+	m.check(ctx, VPSKey(v.ID))
+	if len(h.created) != 2 {
+		t.Fatalf("ordered after done: %+v", h.created)
+	}
+
+	// A refusal that will not go away stops the order, with a notification.
+	_ = st.Update(func(s *store.State) error {
+		s.VPSWatch(v.ID).Order = &store.Order{Active: true, Project: s.Projects[0].ID, Quantity: 1, Name: "web", Batch: "b2", Image: store.NamedID{ID: 7}}
+		return nil
+	})
+	h.createOK, h.createErr = 0, &hetzner.APIError{Status: 401, Code: "token_readonly", Message: "the token is only allowed to perform GET requests"}
+	m.check(ctx, VPSKey(v.ID))
+	got = n.take()
+	if o := order(); o.Active || !strings.Contains(o.Error, "GET requests") {
+		t.Fatalf("order after refusal: %+v", o)
+	}
+	if len(got) != 2 || got[0].title != "Could not order CAX11" || got[0].kind != "failure" {
+		t.Fatalf("sent %+v", got)
+	}
+	m.check(ctx, VPSKey(v.ID))
+	if len(h.created) != 2 || len(n.take()) != 0 {
+		t.Fatal("ordered again after a refusal")
 	}
 }
 
