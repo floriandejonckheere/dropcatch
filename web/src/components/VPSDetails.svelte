@@ -1,7 +1,6 @@
 <script lang="ts">
   import { api, type Catalog, type VPS } from '../lib/api'
   import { date, dateTime, minutes, regionLabel, relative, statusLabel, vpsEvery } from '../lib/format'
-  import { session } from '../lib/session.svelte'
   import { app } from '../lib/state.svelte'
   import { orderUrl, planLine, planSummary, place, places, providerName, vpsActions } from '../lib/vps'
   import Icon from './Icon.svelte'
@@ -21,7 +20,7 @@
   $effect(() => {
     const [provider, subsidiary] = [v.provider, v.subsidiary || 'FR']
     catalog = null
-    if (provider === 'hetzner' && !session.config?.hetzner) return
+    if (provider === 'hetzner' && !app.projects.length) return
     ;(provider === 'hetzner' ? api.hetznerPlans() : api.ovhPlans(subsidiary))
       .then((c) => {
         if (provider === v.provider) catalog = c

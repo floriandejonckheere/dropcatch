@@ -58,7 +58,7 @@ func newTestClient(t *testing.T) (*Client, *[]string) {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	c := New("test", "secret")
+	c := New("test")
 	c.BaseURL = srv.URL + "/v1"
 	c.now = func() time.Time { return time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC) }
 	return c, &calls
@@ -66,7 +66,7 @@ func newTestClient(t *testing.T) (*Client, *[]string) {
 
 func TestStock(t *testing.T) {
 	c, calls := newTestClient(t)
-	got, err := c.Stock(context.Background(), "ccx13")
+	got, err := c.Stock(context.Background(), "secret", "ccx13")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,10 +82,10 @@ func TestStock(t *testing.T) {
 	}
 
 	// Locations where the type is deprecated are not offered anymore.
-	if got, _ := c.Stock(context.Background(), "cx22"); len(got) != 0 {
+	if got, _ := c.Stock(context.Background(), "secret", "cx22"); len(got) != 0 {
 		t.Errorf("deprecated type offered in %+v", got)
 	}
-	if _, err := c.Stock(context.Background(), "nope"); err == nil || !strings.Contains(err.Error(), "no server type") {
+	if _, err := c.Stock(context.Background(), "secret", "nope"); err == nil || !strings.Contains(err.Error(), "no server type") {
 		t.Errorf("unknown type: %v", err)
 	}
 	// Locations are cached.
@@ -102,7 +102,7 @@ func TestStock(t *testing.T) {
 
 func TestPlans(t *testing.T) {
 	c, _ := newTestClient(t)
-	cat, err := c.Plans(context.Background())
+	cat, err := c.Plans(context.Background(), "secret")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,12 +124,11 @@ func TestPlans(t *testing.T) {
 }
 
 func TestErrors(t *testing.T) {
-	if _, err := New("test", "").Stock(context.Background(), "cx23"); !errors.Is(err, ErrNoToken) {
+	if _, err := New("test").Stock(context.Background(), "", "cx23"); !errors.Is(err, ErrNoToken) {
 		t.Errorf("without token: %v", err)
 	}
 	c, _ := newTestClient(t)
-	c.Token = "wrong"
-	if _, err := c.Plans(context.Background()); err == nil || !strings.Contains(err.Error(), "401") {
+	if _, err := c.Plans(context.Background(), "wrong"); err == nil || !strings.Contains(err.Error(), "401") {
 		t.Errorf("wrong token: %v", err)
 	}
 }

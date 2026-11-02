@@ -185,8 +185,7 @@ export interface ServerConfig {
   apprise: boolean
   /** VAPID public key for push subscriptions; empty when push is unavailable. */
   pushKey: string
-  /** Whether a Hetzner Cloud API token is configured. */
-  hetzner: boolean
+
   ovhSubsidiaries: { code: string; name: string }[]
   limits: {
     minInterval: number

@@ -87,7 +87,7 @@ func (f *fakeNotifier) take() []sent {
 }
 
 func setup(t *testing.T, domains ...string) (*Monitor, *store.Store, *fakeLookup, *fakeNotifier) {
-	st, err := store.Open(t.TempDir())
+	st, err := store.Open(t.TempDir(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,10 @@ type fakeHetzner struct {
 	created   []hetzner.CreateServer
 }
 
-func (f *fakeHetzner) Stock(_ context.Context, plan string) ([]hetzner.Location, error) {
+func (f *fakeHetzner) Stock(_ context.Context, token, plan string) ([]hetzner.Location, error) {
+	if token == "" {
+		return nil, hetzner.ErrNoToken
+	}
 	return f.locs, nil
 }
 
@@ -253,18 +256,23 @@ func TestHetzner(t *testing.T) {
 		return nil
 	})
 	ctx := context.Background()
-
-	// Without a token, the check fails and nothing is sent.
-	m.check(ctx, VPSKey(v.ID))
-	if w := st.Snapshot().VPSWatch(v.ID); w.Status != store.Unknown || !strings.Contains(w.Error, "API token") || len(n.take()) != 0 {
-		t.Fatalf("without token: %+v", w)
-	}
-
 	h := &fakeHetzner{locs: []hetzner.Location{
 		{Code: "fsn1", Name: "Falkenstein, Germany", Region: "europe"},
 		{Code: "hel1", Name: "Helsinki, Finland", Region: "europe", Available: true},
 	}}
 	m.Hetzner = h
+
+	// Without a project, and so without a token, the check fails and
+	// nothing is sent.
+	m.check(ctx, VPSKey(v.ID))
+	if w := st.Snapshot().VPSWatch(v.ID); w.Status != store.Unknown || !strings.Contains(w.Error, "add a Hetzner project") || len(n.take()) != 0 {
+		t.Fatalf("without token: %+v", w)
+	}
+
+	_ = st.Update(func(s *store.State) error {
+		s.AddProject(store.Project{Name: "Prod", Token: "rw"}, time.Now())
+		return nil
+	})
 	m.check(ctx, VPSKey(v.ID))
 	if w := st.Snapshot().VPSWatch(v.ID); w.Status != store.OutOfStock || w.Error != "" || len(n.take()) != 0 {
 		t.Fatalf("out of stock in the watched locations: %+v", w)

@@ -1,8 +1,8 @@
 // Package hetzner reads the availability of Hetzner Cloud server types
 // from the Hetzner Cloud API, and creates servers (order.go).
 //
-// The API needs a token. For availability, any project's will do, and a
-// read-only one is enough.
+// The API needs a token. For availability, any project's will do: checks
+// use the token of a project added in the settings.
 // GET /server_types lists each server type with its CPU type (shared or
 // dedicated), architecture (x86 or arm), prices, and the locations that
 // offer it, each with "available": whether it can be ordered there now.
@@ -25,8 +25,8 @@ import (
 	"time"
 )
 
-// ErrNoToken means that no API token was configured.
-var ErrNoToken = errors.New("Hetzner Cloud needs an API token: set DROPCATCH_HETZNER_TOKEN to a read-only token from any Hetzner Cloud project")
+// ErrNoToken means that no Hetzner project, and so no API token, was added.
+var ErrNoToken = errors.New("Hetzner Cloud needs an API token: add a Hetzner project in the settings")
 
 // OrderURL is where servers are created.
 const OrderURL = "https://console.hetzner.com/"
@@ -60,7 +60,6 @@ type Catalog struct {
 
 type Client struct {
 	BaseURL string
-	Token   string
 	HTTP    *http.Client
 
 	userAgent string
@@ -73,18 +72,14 @@ type Client struct {
 	catalogAt time.Time
 }
 
-func New(userAgent, token string) *Client {
+func New(userAgent string) *Client {
 	return &Client{
 		BaseURL:   "https://api.hetzner.cloud/v1",
-		Token:     token,
 		HTTP:      &http.Client{Timeout: 30 * time.Second},
 		userAgent: userAgent,
 		now:       time.Now,
 	}
 }
-
-// Configured reports whether a token is set.
-func (c *Client) Configured() bool { return c.Token != "" }
 
 type rawServerType struct {
 	Name         string  `json:"name"`
@@ -120,13 +115,15 @@ type rawLocation struct {
 	NetworkZone string `json:"network_zone"`
 }
 
-func (c *Client) get(ctx context.Context, path string, query url.Values, v any) error {
-	if c.Token == "" {
+// get reads the catalog (server types, locations), which any project's
+// token may read.
+func (c *Client) get(ctx context.Context, token, path string, query url.Values, v any) error {
+	if token == "" {
 		return ErrNoToken
 	}
-	err := c.do(ctx, c.Token, http.MethodGet, path, query, nil, v)
+	err := c.do(ctx, token, http.MethodGet, path, query, nil, v)
 	if e, ok := errors.AsType[*APIError](err); ok && e.Status == http.StatusUnauthorized {
-		return errors.New("Hetzner refused the API token (401); check DROPCATCH_HETZNER_TOKEN")
+		return errors.New("Hetzner refused the API token (401); check the token of your Hetzner project in the settings")
 	}
 	return err
 }
@@ -195,7 +192,7 @@ func (c *Client) do(ctx context.Context, token, method, path string, query url.V
 }
 
 // serverTypes lists the server types, all of them or the named one.
-func (c *Client) serverTypes(ctx context.Context, name string) ([]rawServerType, error) {
+func (c *Client) serverTypes(ctx context.Context, token, name string) ([]rawServerType, error) {
 	var out []rawServerType
 	for page := 1; page > 0; {
 		q := url.Values{"per_page": {"50"}, "page": {strconv.Itoa(page)}}
@@ -210,7 +207,7 @@ func (c *Client) serverTypes(ctx context.Context, name string) ([]rawServerType,
 				} `json:"pagination"`
 			} `json:"meta"`
 		}
-		if err := c.get(ctx, "/server_types", q, &res); err != nil {
+		if err := c.get(ctx, token, "/server_types", q, &res); err != nil {
 			return nil, err
 		}
 		out = append(out, res.ServerTypes...)
@@ -221,7 +218,7 @@ func (c *Client) serverTypes(ctx context.Context, name string) ([]rawServerType,
 
 // locationsByName returns Hetzner's locations, cached for a day: new
 // locations are rare, and the server types only name them.
-func (c *Client) locationsByName(ctx context.Context) (map[string]rawLocation, error) {
+func (c *Client) locationsByName(ctx context.Context, token string) (map[string]rawLocation, error) {
 	c.mu.Lock()
 	if c.locations != nil && c.now().Sub(c.locsAt) < 24*time.Hour {
 		defer c.mu.Unlock()
@@ -231,7 +228,7 @@ func (c *Client) locationsByName(ctx context.Context) (map[string]rawLocation, e
 	var res struct {
 		Locations []rawLocation `json:"locations"`
 	}
-	if err := c.get(ctx, "/locations", url.Values{"per_page": {"50"}}, &res); err != nil {
+	if err := c.get(ctx, token, "/locations", url.Values{"per_page": {"50"}}, &res); err != nil {
 		return nil, err
 	}
 	m := map[string]rawLocation{}
@@ -252,8 +249,8 @@ func (c *Client) offered(d *deprecation) bool {
 
 // Stock returns the locations that offer the server type, and whether it
 // is available in each, sorted by region and name.
-func (c *Client) Stock(ctx context.Context, plan string) ([]Location, error) {
-	types, err := c.serverTypes(ctx, plan)
+func (c *Client) Stock(ctx context.Context, token, plan string) ([]Location, error) {
+	types, err := c.serverTypes(ctx, token, plan)
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +258,7 @@ func (c *Client) Stock(ctx context.Context, plan string) ([]Location, error) {
 	if i < 0 {
 		return nil, fmt.Errorf("Hetzner has no server type %s", plan)
 	}
-	locs, err := c.locationsByName(ctx)
+	locs, err := c.locationsByName(ctx, token)
 	if err != nil {
 		return nil, err
 	}
@@ -281,14 +278,14 @@ func (c *Client) Stock(ctx context.Context, plan string) ([]Location, error) {
 
 // Plans returns the server types that can be ordered in at least one
 // location, cached for an hour.
-func (c *Client) Plans(ctx context.Context) (Catalog, error) {
+func (c *Client) Plans(ctx context.Context, token string) (Catalog, error) {
 	c.mu.Lock()
 	if c.catalog != nil && c.now().Sub(c.catalogAt) < time.Hour {
 		defer c.mu.Unlock()
 		return *c.catalog, nil
 	}
 	c.mu.Unlock()
-	types, err := c.serverTypes(ctx, "")
+	types, err := c.serverTypes(ctx, token, "")
 	if err != nil {
 		return Catalog{}, err
 	}

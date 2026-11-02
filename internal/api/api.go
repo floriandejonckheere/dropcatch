@@ -43,12 +43,11 @@ type OVH interface {
 	Stock(ctx context.Context, subsidiary, plan string) ([]ovh.Datacenter, error)
 }
 
-// Hetzner reads Hetzner Cloud server types and their availability (a
-// *hetzner.Client).
+// Hetzner reads Hetzner Cloud server types and their availability, and
+// the SSH keys and images of projects (a *hetzner.Client).
 type Hetzner interface {
-	Configured() bool
-	Plans(ctx context.Context) (hetzner.Catalog, error)
-	Stock(ctx context.Context, plan string) ([]hetzner.Location, error)
+	Plans(ctx context.Context, token string) (hetzner.Catalog, error)
+	Stock(ctx context.Context, token, plan string) ([]hetzner.Location, error)
 	CheckProjectToken(ctx context.Context, token string) error
 	SSHKeys(ctx context.Context, token string) ([]hetzner.SSHKey, error)
 	Images(ctx context.Context, token, arch string) ([]hetzner.Image, error)
@@ -125,7 +124,6 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"version":         Version,
 		"apprise":         s.apprise.Path != "",
 		"pushKey":         s.pushKey,
-		"hetzner":         s.hetzner.Configured(),
 		"ovhSubsidiaries": ovh.Subsidiaries,
 		"limits": map[string]int{
 			"minInterval":      store.MinInterval,

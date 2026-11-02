@@ -11,9 +11,12 @@
   const users = (p: Project) => app.vps.filter((v) => v.order?.project === p.id)
 
   async function remove(p: Project) {
+    const last = app.projects.length === 1 && app.vps.some((v) => v.provider === 'hetzner')
     const ok = await dialogs.confirm({
       title: `Remove ${p.name}?`,
-      message: 'Dropcatch forgets its API token. Servers created in it are not affected.',
+      message:
+        'Dropcatch forgets its API token. Servers created in it are not affected.' +
+        (last ? ' Without a project, your Hetzner watches cannot be checked until you add one again.' : ''),
       confirm: 'Remove',
       danger: true,
     })
@@ -32,7 +35,10 @@
   <div class="head">
     <div>
       <h2>Hetzner projects</h2>
-      <p class="hint">Projects that Hetzner watches can order servers in when they are in stock, each with a Read &amp; Write API token.</p>
+      <p class="hint">
+        Projects that Hetzner watches can order servers in when they are in stock, each with a Read &amp; Write API token. Add one to watch Hetzner Cloud: the first
+        project's token also checks the stock.
+      </p>
     </div>
     <button class="pill" onclick={() => (editing = {})}><Icon name="plus" size={16} />Add project</button>
   </div>

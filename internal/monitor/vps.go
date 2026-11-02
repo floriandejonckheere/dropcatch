@@ -22,7 +22,7 @@ func (m *Monitor) checkVPS(ctx context.Context, id string) {
 		return
 	}
 	sctx, cancel := context.WithTimeout(ctx, time.Duration(st.Settings.Timeout)*time.Second)
-	stock, err := m.stock(sctx, *v)
+	stock, err := m.stock(sctx, st, *v)
 	cancel()
 	if ctx.Err() != nil {
 		return
@@ -79,14 +79,11 @@ func (m *Monitor) checkVPS(ctx context.Context, id string) {
 
 // stock asks the watch's provider for the stock of its plan in every
 // datacenter or location that offers it.
-func (m *Monitor) stock(ctx context.Context, v store.VPS) ([]store.Stock, error) {
+func (m *Monitor) stock(ctx context.Context, st store.State, v store.VPS) ([]store.Stock, error) {
 	var stock []store.Stock
 	switch v.Provider {
 	case store.Hetzner:
-		if m.Hetzner == nil {
-			return nil, hetzner.ErrNoToken
-		}
-		locs, err := m.Hetzner.Stock(ctx, v.Plan)
+		locs, err := m.Hetzner.Stock(ctx, st.HetznerToken(), v.Plan)
 		if err != nil {
 			return nil, err
 		}

@@ -114,9 +114,7 @@
     </div>
   </form>
 
-  {#if session.config?.hetzner}
-    <ProjectsCard />
-  {/if}
+  <ProjectsCard />
 
   <section class="about">
     <p class="muted">

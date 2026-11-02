@@ -30,10 +30,12 @@ func TestParse(t *testing.T) {
 		t.Fatalf("DROPCATCH_PASSWORD_FILE: %q, %v", c.Password, err)
 	}
 
-	tok := t.TempDir() + "/token"
-	_ = os.WriteFile(tok, []byte("hz-token\n"), 0o600)
-	if c, err = Parse([]string{"--data-dir", dir, "--hetzner-token-file", tok}, func(string) string { return "" }); err != nil || c.HetznerToken != "hz-token" {
-		t.Fatalf("--hetzner-token-file: %q, %v", c.HetznerToken, err)
+	key := t.TempDir() + "/key"
+	_ = os.WriteFile(key, []byte("0123456789abcdef0123456789abcdef\n"), 0o600)
+	if c, err = Parse([]string{"--data-dir", dir}, func(k string) string {
+		return map[string]string{"DROPCATCH_SECRET_KEY_FILE": key}[k]
+	}); err != nil || c.SecretKey != "0123456789abcdef0123456789abcdef" {
+		t.Fatalf("DROPCATCH_SECRET_KEY_FILE: %q, %v", c.SecretKey, err)
 	}
 
 	bad := [][]string{
@@ -44,6 +46,8 @@ func TestParse(t *testing.T) {
 		{"--data-dir", dir, "--password", "a", "--password-file", pw},
 		{"--data-dir", dir, "--secret-file", dir + "/missing"},
 		{"--data-dir", dir, "--apprise", dir + "/missing"},
+		{"--data-dir", dir, "--secret-key", "too-short"},
+		{"--data-dir", dir, "--hetzner-token", "removed"},
 	}
 	for _, args := range bad {
 		if _, err := Parse(args, func(string) string { return "" }); err == nil {

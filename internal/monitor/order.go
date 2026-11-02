@@ -30,7 +30,7 @@ const (
 func (m *Monitor) order(ctx context.Context, v store.VPS) {
 	o := v.Order
 	// A paused watch can still be checked on demand, but does not order.
-	if v.Provider != store.Hetzner || o == nil || !o.Active || o.Done() || v.Paused || m.Hetzner == nil {
+	if v.Provider != store.Hetzner || o == nil || !o.Active || o.Done() || v.Paused {
 		return
 	}
 	loc, ok := orderLocation(v)

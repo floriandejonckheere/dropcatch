@@ -3,7 +3,8 @@
 //
 // The state is small, so every change rewrites the whole file: it is
 // written to a temporary file and renamed over the old one, which never
-// leaves a half-written file behind.
+// leaves a half-written file behind. Credentials in it are encrypted when
+// a secret key is set (crypt.go).
 package store
 
 import (
@@ -13,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -244,7 +246,8 @@ type VPS struct {
 }
 
 // Project is a Hetzner Cloud project. An API token belongs to one project,
-// so the token chooses where servers are created.
+// so the token chooses where servers are created. Any project's token also
+// reads the stock of server types.
 type Project struct {
 	ID    string    `json:"id"`
 	Name  string    `json:"name"`
@@ -482,6 +485,16 @@ func (s State) Project(id string) *Project {
 	return nil
 }
 
+// HetznerToken returns the token that Hetzner's server types and their
+// stock are read with: the first project's, as any project's will do.
+// It is empty when no project was added.
+func (s State) HetznerToken() string {
+	if len(s.Projects) == 0 {
+		return ""
+	}
+	return s.Projects[0].Token
+}
+
 func (s *State) AddProject(p Project, now time.Time) *Project {
 	p.ID, p.Added = newID(), now
 	s.Projects = append(s.Projects, p)
@@ -538,17 +551,24 @@ func (s *State) RemoveTarget(id string) error {
 }
 
 type Store struct {
-	mu    sync.Mutex
-	file  string
-	state State
+	mu     sync.Mutex
+	file   string
+	sealer *sealer // nil without a secret key
+	state  State
 }
 
-// Open loads the state from dir, or starts with defaults when there is none.
-func Open(dir string) (*Store, error) {
+// Open loads the state from dir, or starts with defaults when there is
+// none. With a secret key, the credentials in the file are encrypted, and
+// those that are not yet are encrypted now.
+func Open(dir, secretKey string) (*Store, error) {
+	sl, err := newSealer(secretKey)
+	if err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	s := &Store{file: filepath.Join(dir, FileName), state: State{Settings: DefaultSettings()}}
+	s := &Store{file: filepath.Join(dir, FileName), sealer: sl, state: State{Settings: DefaultSettings()}}
 	data, err := os.ReadFile(s.file)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
@@ -560,6 +580,15 @@ func Open(dir string) (*Store, error) {
 	s.state.Settings.Interval, s.state.Settings.VPSInterval = 0, 0
 	if err := json.Unmarshal(data, &s.state); err != nil {
 		return nil, fmt.Errorf("reading %s: %w", s.file, err)
+	}
+	// Credentials written before the secret key was set are encrypted
+	// below, once the state is complete.
+	plain := false
+	for _, c := range credentials(&s.state) {
+		plain = plain || *c != "" && !strings.HasPrefix(*c, encPrefix)
+		if *c, err = s.sealer.open(*c); err != nil {
+			return nil, fmt.Errorf("reading %s: %w", s.file, err)
+		}
 	}
 	// Fill in settings added after the file was written.
 	def := DefaultSettings()
@@ -589,6 +618,12 @@ func Open(dir string) (*Store, error) {
 	if s.state.Settings.Timeout == 0 {
 		s.state.Settings.Timeout = def.Timeout
 	}
+	if plain && s.sealer != nil {
+		if err := s.save(s.state); err != nil {
+			return nil, err
+		}
+		slog.Info("encrypted the credentials in the state file", "file", s.file)
+	}
 	return s, nil
 }
 
@@ -616,11 +651,18 @@ func (s *Store) Update(fn func(*State) error) error {
 }
 
 func (s *Store) save(st State) error {
+	if s.sealer != nil {
+		st = clone(st)
+		for _, c := range credentials(&st) {
+			*c = s.sealer.seal(*c)
+		}
+	}
 	data, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err
 	}
-	// The file holds notification URLs, which often contain credentials.
+	// The file holds credentials, encrypted or not: only the owner may
+	// read it (CreateTemp creates it with mode 0600).
 	tmp, err := os.CreateTemp(filepath.Dir(s.file), "."+FileName+".*")
 	if err != nil {
 		return err

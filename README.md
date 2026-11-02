@@ -63,7 +63,7 @@ While a watch is available, it is checked more often (every 2 minutes by default
 
 ### Hetzner Cloud
 
-Hetzner's API needs a token, but any project's will do, and read-only is enough: create one in the [Hetzner Console](https://console.hetzner.com/) under *Security → API tokens* and pass it as `DROPCATCH_HETZNER_TOKEN` (or in a file with `--hetzner-token-file`). Dropcatch only reads `/server_types` and `/locations`.
+Hetzner's API needs a token: add a project in **Settings → Hetzner projects** (see [Ordering automatically](#ordering-automatically)) before adding a Hetzner watch. The first project's token also reads the stock, from `/server_types` and `/locations`; any project's would do.
 
 Each server type lists the locations that offer it, with whether it can be ordered there now; a watch is **available** when one of its locations can. The form groups the server types by CPU (shared or dedicated vCPU) and architecture (x86, which Hetzner also calls amd64, or Arm64), with their size and lowest monthly price. Server types that Hetzner has retired in a location are not offered there. Hetzner points out that availability is an indication rather than a guarantee: an order can still fail.
 
@@ -71,7 +71,7 @@ Each server type lists the locations that offer it, with whether it can be order
 
 A Hetzner watch can also order its server type as soon as it is in stock:
 
-1. In **Settings → Hetzner projects**, add the project to create the servers in, with an API token of that project with the **Read & Write** permission (a token belongs to one project, so the token chooses the project). Dropcatch checks that the token can create servers, without creating one, and never shows the token again. It is kept in `dropcatch.json`.
+1. In **Settings → Hetzner projects**, add the project to create the servers in, with an API token of that project with the **Read & Write** permission (a token belongs to one project, so the token chooses the project). Dropcatch checks that the token can create servers, without creating one, and never shows the token again. It is kept in `dropcatch.json`, encrypted when a [secret key](#data) is set.
 2. In the watch's form, turn on **Create servers when it is in stock** and choose the project, the location (or the first watched location with stock), the number of servers, their name, the image and the SSH keys. At least one SSH key is needed: without one, Hetzner sets a root password that only the creating request sees.
 
 At the first check that sees stock where the order wants it, Dropcatch creates and starts the servers one at a time, named `cax11-1`, `cax11-2`, … (skipping names it used before), and notifies you of them, also when the watch's notifications are muted. If the stock runs out first, it orders the rest at the next check that sees stock. It stops when all servers are created, or when Hetzner refuses an order for a reason that will not go away by itself (a read-only token, a resource limit, a missing image), with a notification. The servers carry the labels `dropcatch=<watch>` and `dropcatch-batch=<round>`, so that a server whose creation was not confirmed (a lost answer) is counted rather than ordered twice. Servers are billed by the hour from their creation: delete the ones you do not need in the Hetzner Console.
@@ -128,8 +128,8 @@ services:
     environment:
       DROPCATCH_PASSWORD: change-me   # or DROPCATCH_PASSWORD_HASH (bcrypt)
       # DROPCATCH_USERNAME: admin
-      # Read-only Hetzner Cloud API token, to watch Hetzner Cloud servers.
-      # DROPCATCH_HETZNER_TOKEN: your-token
+      # Encrypts the Hetzner tokens and notification URLs in the data volume.
+      # DROPCATCH_SECRET_KEY: the output of openssl rand -hex 32
 
 volumes:
   dropcatch-data:
@@ -158,7 +158,7 @@ For frontend development, also run `cd web && npm run dev`. Vite proxies `/api` 
 | `make fakeregistry` | Runs a fake RDAP registry, OVH API and Hetzner Cloud API on port 8053 for local testing |
 | `make screenshots` | Regenerates `docs/screenshots` |
 
-The fake registry answers for common TLDs: names starting with `free` are available, names starting with `drop` are pending deletion, and all others are registered. It also offers four VPS plans: VPS-1 is out of stock everywhere (until `--restock-after`, if given, then in Roubaix; with `--restock-for`, it sells out again after that long, and restocks again and again), and the others have stock in some datacenters. Its Hetzner Cloud API accepts any token and lists the current server types in the six locations; CAX11 is out of stock everywhere and restocks in Falkenstein like VPS-1. Point Dropcatch at it with `--rdap-bootstrap http://127.0.0.1:8053/dns.json --ovh-api http://127.0.0.1:8053/v1 --hetzner-api http://127.0.0.1:8053/v1 --hetzner-token fake`. `make screenshots` needs Playwright's Chromium (`cd web && npx playwright install chromium`, or set `CHROMIUM_PATH`). Regenerate the screenshots whenever the UI changes.
+The fake registry answers for common TLDs: names starting with `free` are available, names starting with `drop` are pending deletion, and all others are registered. It also offers four VPS plans: VPS-1 is out of stock everywhere (until `--restock-after`, if given, then in Roubaix; with `--restock-for`, it sells out again after that long, and restocks again and again), and the others have stock in some datacenters. Its Hetzner Cloud API accepts any token and lists the current server types in the six locations; CAX11 is out of stock everywhere and restocks in Falkenstein like VPS-1. Point Dropcatch at it with `--rdap-bootstrap http://127.0.0.1:8053/dns.json --ovh-api http://127.0.0.1:8053/v1 --hetzner-api http://127.0.0.1:8053/v1`, and add a Hetzner project with any token. `make screenshots` needs Playwright's Chromium (`cd web && npx playwright install chromium`, or set `CHROMIUM_PATH`). Regenerate the screenshots whenever the UI changes.
 
 Instructions for coding agents are in [AGENTS.md](AGENTS.md).
 
@@ -175,18 +175,22 @@ These are set when starting Dropcatch; the check intervals and notifications are
 | `--password-hash` | | Enables login with a bcrypt hash instead of a plain password |
 | `--username` | | Also require this user name at login |
 | `--secret` | generated | Key for signing session cookies. Set it to keep sessions valid when the data directory is replaced |
-| `--password-file`, `--password-hash-file`, `--secret-file` | | Read the value from a file instead, such as a Docker secret |
+| `--secret-key` | | Encrypts the credentials in the data directory (Hetzner tokens, Apprise URLs). At least 32 characters, such as the output of `openssl rand -hex 32`. See [Data](#data) |
+| `--password-file`, `--password-hash-file`, `--secret-file`, `--secret-key-file` | | Read the value from a file instead, such as a Docker secret |
 | `--apprise` | auto-detected on `PATH` | Path to the Apprise CLI |
 | `--rdap-bootstrap` | `https://data.iana.org/rdap/dns.json` | RDAP bootstrap file that lists the RDAP server of each TLD |
 | `--ovh-api` | the API of each OVH shop | Base URL of the OVH API (such as `https://eu.api.ovh.com/v1`), for all shops |
-| `--hetzner-token` | | Hetzner Cloud API token (read-only is enough), needed to watch Hetzner Cloud servers |
-| `--hetzner-token-file` | | Read the Hetzner token from a file instead |
+
 | `--hetzner-api` | `https://api.hetzner.cloud/v1` | Base URL of the Hetzner Cloud API |
 
 In Docker, `PUID` and `PGID` (default `1000`) set the user and group Dropcatch runs as.
 
-Without a password, anyone who can reach Dropcatch can see and change your domains and notification URLs; it logs a warning at startup. Pass the password, secret and Hetzner token through environment variables or files rather than command-line flags, which other users on the host can see in the process list. To create a bcrypt hash: `htpasswd -bnBC 10 "" 'your-password' | tr -d ':\n'`.
+Without a password, anyone who can reach Dropcatch can see and change your domains and notification URLs; it logs a warning at startup. Pass the password, secret and secret key through environment variables or files rather than command-line flags, which other users on the host can see in the process list. To create a bcrypt hash: `htpasswd -bnBC 10 "" 'your-password' | tr -d ':\n'`.
 
 ## Data
 
 Everything is stored in `dropcatch.json` in the data directory (readable by its owner only, as notification URLs often contain tokens), next to the session key, the push signing key (`vapid.key`) and the list of logged-out sessions. Each change rewrites the file through a temporary file and a rename, so it is never left half-written. Back it up by copying the directory.
+
+With a secret key (`DROPCATCH_SECRET_KEY`), the Hetzner project tokens and Apprise URLs in `dropcatch.json` are encrypted (AES-256-GCM), so that the file or a backup of it does not give them away without the key; keep the key outside the data directory. Credentials stored before the key was set are encrypted at the next start. Without the key, or with another one, Dropcatch refuses to start rather than lose them, so keep it safe. Without a secret key, credentials are stored as plain text, and Dropcatch logs a warning at startup.
+
+`DROPCATCH_HETZNER_TOKEN` is no longer used: Hetzner watches use the token of a project added in the settings. When upgrading, add a project there if you watch Hetzner Cloud servers.

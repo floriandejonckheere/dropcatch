@@ -73,11 +73,25 @@ func (s *Server) handleOVHStock(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"datacenters": dcs})
 }
 
+// hetznerToken returns the token that Hetzner's server types are read
+// with, or answers that a project is needed.
+func (s *Server) hetznerToken(w http.ResponseWriter) (string, bool) {
+	token := s.store.Snapshot().HetznerToken()
+	if token == "" {
+		writeError(w, http.StatusBadRequest, hetzner.ErrNoToken.Error())
+	}
+	return token, token != ""
+}
+
 // handleHetznerPlans lists the Hetzner Cloud server types for the form.
 func (s *Server) handleHetznerPlans(w http.ResponseWriter, r *http.Request) {
+	token, ok := s.hetznerToken(w)
+	if !ok {
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), ovhQuery)
 	defer cancel()
-	cat, err := s.hetzner.Plans(ctx)
+	cat, err := s.hetzner.Plans(ctx, token)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "could not load the Hetzner server types: "+err.Error())
 		return
@@ -93,9 +107,13 @@ func (s *Server) handleHetznerStock(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid server type")
 		return
 	}
+	token, ok := s.hetznerToken(w)
+	if !ok {
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), ovhQuery)
 	defer cancel()
-	locs, err := s.hetzner.Stock(ctx, plan)
+	locs, err := s.hetzner.Stock(ctx, token, plan)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -148,10 +166,6 @@ func (s *Server) handleVPSAdd(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case store.Hetzner:
-		if !s.hetzner.Configured() {
-			writeError(w, http.StatusBadRequest, hetzner.ErrNoToken.Error())
-			return
-		}
 		if !serverType.MatchString(req.Plan) {
 			writeError(w, http.StatusBadRequest, "enter a server type, such as cx23")
 			return
@@ -186,6 +200,9 @@ func (s *Server) handleVPSAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	var v store.VPS
 	if !s.update(w, func(st *store.State) error {
+		if req.Provider == store.Hetzner && st.HetznerToken() == "" {
+			return badRequest{hetzner.ErrNoToken}
+		}
 		p, err := st.AddVPS(store.VPS{
 			Provider: req.Provider, Subsidiary: req.Subsidiary, Plan: req.Plan, PlanName: req.PlanName,
 			Datacenters: dcs, Note: strings.TrimSpace(req.Note), Interval: req.Interval, Muted: req.Muted,

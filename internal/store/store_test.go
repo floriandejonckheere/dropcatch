@@ -11,7 +11,7 @@ import (
 
 func TestStore(t *testing.T) {
 	dir := t.TempDir()
-	s, err := Open(dir)
+	s, err := Open(dir, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestStore(t *testing.T) {
 	})
 
 	// The state survives a restart, sorted by name, and the file is private.
-	s, err = Open(dir)
+	s, err = Open(dir, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestSettingsValidate(t *testing.T) {
 
 func TestIntervalSettings(t *testing.T) {
 	// A new installation checks domains rarely and VPS often.
-	s, err := Open(t.TempDir())
+	s, err := Open(t.TempDir(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestIntervalSettings(t *testing.T) {
 	// Before VPSInterval existed, VPS were checked at the one interval.
 	dir := t.TempDir()
 	_ = os.WriteFile(filepath.Join(dir, FileName), []byte(`{"settings":{"interval":60,"timeout":20}}`), 0o600)
-	if s, err = Open(dir); err != nil {
+	if s, err = Open(dir, ""); err != nil {
 		t.Fatal(err)
 	}
 	set := s.Snapshot().Settings

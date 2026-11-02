@@ -38,9 +38,12 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	st, err := store.Open(cfg.DataDir)
+	st, err := store.Open(cfg.DataDir, cfg.SecretKey)
 	if err != nil {
 		return err
+	}
+	if cfg.SecretKey == "" {
+		slog.Warn("no secret key: Hetzner tokens and notification URLs are stored unencrypted; set DROPCATCH_SECRET_KEY to encrypt them")
 	}
 
 	apprise := &notify.Apprise{Path: cfg.Apprise}
@@ -51,12 +54,10 @@ func run() error {
 	lc.BootstrapURL = cfg.RDAPBootstrap
 	oc := ovh.New("dropcatch/" + api.Version)
 	oc.BaseURL = cfg.OVHAPI
-	hc := hetzner.New("dropcatch/"+api.Version, cfg.HetznerToken)
+	hc := hetzner.New("dropcatch/" + api.Version)
 	hc.BaseURL = cfg.HetznerAPI
 	mon := monitor.New(st, lc, oc, apprise)
-	if hc.Configured() {
-		mon.Hetzner = hc
-	}
+	mon.Hetzner = hc
 	push, err := webpush.New(filepath.Join(cfg.DataDir, "vapid.key"))
 	if err != nil {
 		return err

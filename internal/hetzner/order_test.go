@@ -59,7 +59,7 @@ func newProjectAPI(t *testing.T) (*Client, *[]map[string]any) {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	c := New("test", "")
+	c := New("test")
 	c.BaseURL = srv.URL + "/v1"
 	return c, &created
 }

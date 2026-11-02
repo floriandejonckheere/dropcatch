@@ -2,6 +2,7 @@
   import { untrack } from 'svelte'
   import { api, type Catalog, type OrderInput, type Plan, type Provider, type Region, type Stock, type VPS } from '../lib/api'
   import { minutes, regionLabel } from '../lib/format'
+  import { router } from '../lib/router.svelte'
   import { session } from '../lib/session.svelte'
   import { app } from '../lib/state.svelte'
   import { toasts } from '../lib/toasts.svelte'
@@ -41,8 +42,8 @@
 
   const planName = $derived(catalog?.plans.find((p) => p.code === plan)?.name ?? initial.planName ?? plan)
   const hetzner = $derived(provider === 'hetzner')
-  // Hetzner needs an API token, set when starting Dropcatch.
-  const noToken = $derived(hetzner && !session.config?.hetzner)
+  // Hetzner's API is read with the token of a project from the settings.
+  const noToken = $derived(hetzner && !app.projects.length)
   const where = $derived(place(provider))
 
   // Hetzner's server types, grouped by CPU type and architecture.
@@ -60,7 +61,7 @@
     const current = () => prov === provider && sub === subsidiary
     catalog = null
     catalogError = ''
-    if (prov === 'hetzner' && !session.config?.hetzner) return
+    if (prov === 'hetzner' && !app.projects.length) return
     ;(prov === 'hetzner' ? api.hetznerPlans() : api.ovhPlans(sub))
       .then((c) => {
         if (!current()) return
@@ -169,8 +170,8 @@
     {#if !editing && hetzner}
       {#if noToken}
         <p class="notice">
-          Hetzner Cloud's API needs a token. Create a <strong>read-only</strong> API token in any Hetzner Cloud project (Security → API tokens) and start Dropcatch
-          with <code>DROPCATCH_HETZNER_TOKEN</code> set to it.
+          Hetzner Cloud's API needs a token. Add a Hetzner project with its API token under <a href={router.href('settings')} onclick={onclose}>Settings</a>; Dropcatch
+          uses it to check the stock and to order servers.
         </p>
       {:else}
         <label class="field">
@@ -330,6 +331,10 @@
     font-size: 14px;
     line-height: 1.5;
     color: var(--text-2);
+  }
+
+  .notice a {
+    color: var(--accent-text);
   }
 
   .two {

@@ -28,10 +28,13 @@ type Config struct {
 	// OVHAPI replaces the OVH API host (for the fake registry); empty
 	// uses the host of each subsidiary.
 	OVHAPI string
-	// HetznerToken is a Hetzner Cloud API token, needed to watch Hetzner
-	// server types; HetznerAPI replaces the API's base URL.
-	HetznerToken string
-	HetznerAPI   string
+	// HetznerAPI replaces the Hetzner Cloud API's base URL. Its tokens are
+	// those of the projects added in the web UI.
+	HetznerAPI string
+
+	// SecretKey encrypts the credentials in the state file (Hetzner
+	// tokens, Apprise URLs); empty stores them as plain text.
+	SecretKey string
 
 	// Authentication is enabled when Password or PasswordHash is set.
 	Username     string
@@ -61,13 +64,14 @@ func Parse(args []string, getenv func(string) string) (*Config, error) {
 	apprise := fs.String("apprise", env("apprise", ""), "path to the apprise CLI (auto-detected on PATH when empty)")
 	fs.StringVar(&c.RDAPBootstrap, "rdap-bootstrap", env("rdap-bootstrap", "https://data.iana.org/rdap/dns.json"), "URL of the RDAP bootstrap file (RFC 9224)")
 	fs.StringVar(&c.OVHAPI, "ovh-api", env("ovh-api", ""), "base URL of the OVH API, such as https://eu.api.ovh.com/v1 (default: the API of each subsidiary)")
-	fs.StringVar(&c.HetznerToken, "hetzner-token", env("hetzner-token", ""), "Hetzner Cloud API token (read-only is enough), to watch Hetzner Cloud servers")
+
 	fs.StringVar(&c.HetznerAPI, "hetzner-api", env("hetzner-api", "https://api.hetzner.cloud/v1"), "base URL of the Hetzner Cloud API")
 	fs.StringVar(&c.Username, "username", env("username", ""), "username for login (optional; requires a password)")
 	fs.StringVar(&c.Password, "password", env("password", ""), "password for login; enables authentication")
 	fs.StringVar(&c.PasswordHash, "password-hash", env("password-hash", ""), "bcrypt hash of the password (alternative to --password)")
 	fs.StringVar(&c.Secret, "secret", env("secret", ""), "key for signing session cookies (default: generated and stored in the data dir)")
-	secretFiles := map[string]*string{"password": &c.Password, "password-hash": &c.PasswordHash, "secret": &c.Secret, "hetzner-token": &c.HetznerToken}
+	fs.StringVar(&c.SecretKey, "secret-key", env("secret-key", ""), "key that encrypts the credentials in the data dir (at least 32 characters; default: not encrypted)")
+	secretFiles := map[string]*string{"password": &c.Password, "password-hash": &c.PasswordHash, "secret": &c.Secret, "secret-key": &c.SecretKey}
 	fileFlags := map[string]*string{}
 	for name := range secretFiles {
 		fileFlags[name] = fs.String(name+"-file", env(name+"-file", ""), "file containing the --"+name+" value (e.g. a Docker secret)")
@@ -78,7 +82,7 @@ func Parse(args []string, getenv func(string) string) (*Config, error) {
 	}
 	// Command-line arguments are visible to every user on the host (ps, /proc).
 	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "password" || f.Name == "secret" || f.Name == "hetzner-token" {
+		if f.Name == "password" || f.Name == "secret" || f.Name == "secret-key" {
 			slog.Warn("--" + f.Name + " is visible in the process list; prefer DROPCATCH_" + strings.ToUpper(strings.ReplaceAll(f.Name, "-", "_")) + " or --" + f.Name + "-file")
 		}
 	})
@@ -120,6 +124,12 @@ func Parse(args []string, getenv func(string) string) (*Config, error) {
 	}
 	if c.PasswordHash != "" && !strings.HasPrefix(c.PasswordHash, "$2") {
 		return nil, errors.New("--password-hash must be a bcrypt hash")
+	}
+	if c.SecretKey != "" && len(c.SecretKey) < 32 {
+		return nil, errors.New("--secret-key must have at least 32 characters, such as the output of openssl rand -hex 32")
+	}
+	if getenv("DROPCATCH_HETZNER_TOKEN") != "" || getenv("DROPCATCH_HETZNER_TOKEN_FILE") != "" {
+		slog.Warn("DROPCATCH_HETZNER_TOKEN is no longer used: Hetzner watches use the token of a Hetzner project added in the settings")
 	}
 
 	c.Apprise = *apprise
