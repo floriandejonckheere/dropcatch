@@ -20,7 +20,7 @@ RUN CGO_ENABLED=0 go build -trimpath \
       -o /out/dropcatch ./cmd/dropcatch
 
 # Python for the Apprise CLI, which sends the notifications.
-FROM python:3.13-alpine@sha256:bf12ecc0bea3f171d55145dd02c78b5eeb09f30ee2ac9cc2b4c9e4e8f5e30741
+FROM python:3.13-alpine@sha256:9ef1a599f863231c3d91e941389bfdc4a2d6070557243d54df1a4e57015b960e
 COPY docker/requirements.txt /tmp/requirements.txt
 RUN apk add --no-cache su-exec tzdata \
  && pip install --no-cache-dir -r /tmp/requirements.txt \
